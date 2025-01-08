@@ -1,0 +1,6 @@
+[workspace]
+
+members = [
+    "libp2p-stream",
+    "libp2p-stream-poc"
+]
