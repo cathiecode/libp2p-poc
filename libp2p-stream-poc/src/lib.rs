@@ -80,8 +80,6 @@ async fn send(mut stream: Stream) -> io::Result<()> {
 
 enum NetworkThreadCommand {
     Shutdown,
-    BrokenCommandPipe,
-    BrokenIncomingStreamPipe,
 }
 
 enum NetworkListenerEvent {
@@ -116,62 +114,55 @@ async fn network_thread_listen(
         println!("Network thread started");
 
         loop {
-            let event = tokio::select! {
+            tokio::select! {
                 incoming_stream = async {
                     match incoming_streams.next().await {
-                        Some((peer, stream)) => NetworkListenerEvent::IncomingStream((peer, stream)),
-                        None => NetworkListenerEvent::Command(NetworkThreadCommand::BrokenIncomingStreamPipe),
+                        Some((peer, stream)) => {
+                            match echo(stream).await {
+                                Ok(n) => {
+                                    tracing::info!(%peer, "Echoed {n} bytes!");
+                                    event_channel.send(NetworkEvent::Message(format!("Echoed {n} bytes!"))).await.unwrap();
+                                }
+                                Err(e) => {
+                                    tracing::warn!(%peer, "Echo failed: {e}");
+                                }
+                            };        
+                        },
+                        None => {
+                            println!("Incoming stream pipe broken");
+                        },
                     }
-                } => incoming_stream,
-                command = async {
-                    match control.recv().await {
-                        Some(command) => NetworkListenerEvent::Command(command),
-                        None => NetworkListenerEvent::Command(NetworkThreadCommand::BrokenCommandPipe),
-                    }
-                } => command,
+                } => incoming_stream
             };
-
-            match event {
-                NetworkListenerEvent::Command(network_thread_command) => {
-                    match network_thread_command {
-                        NetworkThreadCommand::Shutdown => {
-                            println!("Shutting down network thread");
-                            break;
-                        }
-                        NetworkThreadCommand::BrokenCommandPipe => {
-                            println!("Broken command pipe");
-                            break;
-                        }
-                        NetworkThreadCommand::BrokenIncomingStreamPipe => {
-                            println!("Broken incoming stream pipe");
-                            break;
-                        }
-                    }
-                }
-                NetworkListenerEvent::IncomingStream((peer, stream)) => {
-                    match echo(stream).await {
-                        Ok(n) => {
-                            tracing::info!(%peer, "Echoed {n} bytes!");
-                            event_channel.send(NetworkEvent::Message(format!("Echoed {n} bytes!"))).await.unwrap();
-                        }
-                        Err(e) => {
-                            tracing::warn!(%peer, "Echo failed: {e}");
-                        }
-                    };
-                }
-            }
         }
     });
 
     loop {
-        let event = swarm.next().await.expect("never terminates");
+        tokio::select! {
+            swarm_event = swarm.next() => {
+                let swarm_event = swarm_event.expect("never terminates");
 
-        match event {
-            libp2p::swarm::SwarmEvent::NewListenAddr { address, .. } => {
-                let listen_address = address.with_p2p(*swarm.local_peer_id()).unwrap();
-                tracing::info!(%listen_address);
+                match swarm_event {
+                    libp2p::swarm::SwarmEvent::NewListenAddr { address, .. } => {
+                        let listen_address = address.with_p2p(*swarm.local_peer_id()).unwrap();
+                        tracing::info!(%listen_address);
+                    }
+                    event => tracing::trace!(?event),
+                }
+            },
+
+            control_event = control.recv() => {
+                match control_event {
+                    Some(NetworkThreadCommand::Shutdown) => {
+                        println!("Shutting down network thread");
+                        break;
+                    }
+                    None => {
+                        println!("Broken command pipe");
+                        break;
+                    }
+                };
             }
-            event => tracing::trace!(?event),
         }
     }
 
