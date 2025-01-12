@@ -216,7 +216,11 @@ async fn main() -> Result<()> {
 
     let (command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
 
-    let network_control_thread = tokio::spawn(network_control_thread(network_mode, command_receiver, may_initial_peer));
+    let network_control_thread = tokio::spawn(network_control_thread(
+        network_mode,
+        command_receiver,
+        may_initial_peer,
+    ));
 
     if let Some(server_peerid) = may_server_peerid {
         let (response_sender, mut response_receiver) = tokio::sync::oneshot::channel();
@@ -224,14 +228,15 @@ async fn main() -> Result<()> {
             .send(NetworkCommand::ConnectMirror(ConnectMirrorNetworkCommand {
                 peer: server_peerid,
                 response: response_sender,
-            })).expect("Server thread already exited");
+            }))
+            .expect("Server thread already exited");
 
         let stream = response_receiver.await.unwrap().unwrap();
         let (rx, mut tx) = stream.split();
 
         let mut stdin_lines = {
             let stdin = tokio::io::stdin();
-            let reader = tokio::io::BufReader::new(stdin);    
+            let reader = tokio::io::BufReader::new(stdin);
             reader.lines()
         };
 
@@ -264,13 +269,19 @@ async fn main() -> Result<()> {
 }
 
 /// A very simple, `async fn`-based connection handler for our custom echo protocol.
-async fn client_mirror_connection_thread(peer: PeerId, mut control: stream::Control, result: tokio::sync::oneshot::Sender<Result<libp2p::Stream>>) {
+async fn client_mirror_connection_thread(
+    peer: PeerId,
+    mut control: stream::Control,
+    result: tokio::sync::oneshot::Sender<Result<libp2p::Stream>>,
+) {
     let stream = control.open_stream(peer, MIRROR_PROTOCOL).await;
 
-    result.send(stream.map_err(|e| {
-        tracing::debug!(%peer, %e);
-        anyhow!("Failed to open stream to peer {peer}")
-    })).unwrap();
+    result
+        .send(stream.map_err(|e| {
+            tracing::debug!(%peer, %e);
+            anyhow!("Failed to open stream to peer {peer}")
+        }))
+        .unwrap();
 }
 
 async fn echo(mut stream: Stream) -> io::Result<usize> {
