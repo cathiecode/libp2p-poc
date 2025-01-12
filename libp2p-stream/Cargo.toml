@@ -12,7 +12,7 @@ release = false
 anyhow = "1"
 futures = "0.3.31"
 libc = "0.2.169"
-libp2p = { version = "0.54.1", features = ["quic", "tokio"] }
+libp2p = { version = "0.54.1", features = ["quic", "tcp", "tokio", "kad", "noise", "macros", "yamux", "identify"] }
 libp2p-stream = "0.2.0-alpha"
 rand = "0.8.5"
 tokio = { version = "1.42.0", features = ["full"] }

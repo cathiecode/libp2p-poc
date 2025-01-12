@@ -4,7 +4,7 @@ use std::{backtrace, ffi::{c_char, CStr}, io, time::Duration};
 
 use anyhow::{Context, Result};
 use futures::{AsyncReadExt, AsyncWriteExt, StreamExt};
-use libp2p::{multiaddr::Protocol, Multiaddr, PeerId, Stream, StreamProtocol};
+use libp2p::{multiaddr::Protocol, kad::store::MemoryStore, Multiaddr, PeerId, Stream, StreamProtocol};
 use libp2p_stream as stream;
 use rand::RngCore;
 use tokio::sync::mpsc::error::TryRecvError;
@@ -12,13 +12,19 @@ use tracing::{event, level_filters::LevelFilter};
 use tracing_subscriber::EnvFilter;
 
 const ECHO_PROTOCOL: StreamProtocol = StreamProtocol::new("/echo");
+const MIRRORP2P_PROTOCOL: StreamProtocol = StreamProtocol::new("/mirrorp2p");
+
+#[derive(NetworkBehaviour)]
+struct ZvrBehaviour {
+    kademlia: kad::Behaviour<MemoryStore>,
+}
 
 /// A very simple, `async fn`-based connection handler for our custom echo protocol.
 async fn connection_handler(peer: PeerId, mut control: stream::Control) {
     loop {
         tokio::time::sleep(Duration::from_secs(1)).await; // Wait a second between echos.
 
-        let stream = match control.open_stream(peer, ECHO_PROTOCOL).await {
+        let stream = match control.open_stream(peer, MIRRORP2P_PROTOCOL).await {
             Ok(stream) => stream,
             Err(error @ stream::OpenStreamError::UnsupportedProtocol(_)) => {
                 tracing::info!(%peer, %error);
