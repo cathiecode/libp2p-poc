@@ -1,7 +1,7 @@
 use std::{io, ops::Deref, time::Duration};
 
-use anyhow::{Context, Result};
-use futures::{AsyncReadExt, AsyncWriteExt, StreamExt};
+use anyhow::{anyhow, Context, Result};
+use futures::{io::BufReader, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, StreamExt};
 use libp2p::{
     identify, kad,
     multiaddr::Protocol,
@@ -10,10 +10,11 @@ use libp2p::{
 };
 use libp2p_stream as stream;
 use rand::{seq::IteratorRandom, RngCore};
+use tokio::io::AsyncBufReadExt as _;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::EnvFilter;
 
-const ECHO_PROTOCOL: StreamProtocol = StreamProtocol::new("/echo");
+const MIRROR_PROTOCOL: StreamProtocol = StreamProtocol::new("/mirror"); // TODO: version number?
 
 struct Config {
     wellknown_peers: Vec<String>,
@@ -25,46 +26,37 @@ impl Config {
     }
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum NetworkMode {
+    Server,
+    Client,
+}
+
+struct ConnectMirrorNetworkCommand {
+    peer: PeerId,
+    response: tokio::sync::oneshot::Sender<Result<libp2p::Stream>>,
+}
+
+enum NetworkCommand {
+    ConnectMirror(ConnectMirrorNetworkCommand),
+    ListenMirror, // TODO
+}
+
+type NetworkCommandSender = tokio::sync::mpsc::UnboundedSender<NetworkCommand>;
+type NetworkCommandReceiver = tokio::sync::mpsc::UnboundedReceiver<NetworkCommand>;
+
 #[derive(NetworkBehaviour)]
 struct Behaviour {
     kademlia: kad::Behaviour<kad::store::MemoryStore>,
-    stream: stream::Behaviour,
+    mirror: stream::Behaviour,
     identify: libp2p::identify::Behaviour,
 }
 
-// cargo run <server/client> <wellknown_peer> <dial_peer>.
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    let arg_server_client = std::env::args().nth(1).unwrap();
-    let arg_wellknown_peer = std::env::args().nth(2);
-    let arg_server_address = std::env::args().nth(3);
-
-    let wellknown_peer = if let Some(wellknown_peer) = arg_wellknown_peer {
-        Some(wellknown_peer)
-    } else {
-        None
-    };
-
-    let config = Config {
-        wellknown_peers: wellknown_peer
-            .map(|wellknown_peer| vec![wellknown_peer])
-            .unwrap_or(vec![]),
-    };
-
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::builder()
-                .with_default_directive(LevelFilter::DEBUG.into())
-                .from_env()?,
-        )
-        .init();
-
-    let maybe_server_address = arg_server_address
-        .map(|arg| arg.parse::<Multiaddr>())
-        .transpose()
-        .context("Failed to parse argument as `Multiaddr`")?;
-
+async fn network_control_thread(
+    network_mode: NetworkMode,
+    mut command_receiver: NetworkCommandReceiver,
+    may_initial_peer: Option<Multiaddr>,
+) -> Result<()> {
     let mut swarm = libp2p::SwarmBuilder::with_new_identity()
         .with_tokio()
         .with_quic()
@@ -75,7 +67,7 @@ async fn main() -> Result<()> {
                     key.public().to_peer_id(),
                     kad::store::MemoryStore::new(key.public().to_peer_id()),
                 ),
-                stream: stream::Behaviour::new(),
+                mirror: stream::Behaviour::new(),
                 identify: identify::Behaviour::new(identify::Config::new(
                     "/ipfs/id/1.0.0".to_string(),
                     key.public(),
@@ -87,12 +79,6 @@ async fn main() -> Result<()> {
 
     swarm.listen_on("/ip4/0.0.0.0/udp/0/quic-v1".parse()?)?;
 
-    let may_initial_peer: Option<Multiaddr> = config
-        .get_wellknown_peer()
-        .iter()
-        .choose(&mut rand::thread_rng())
-        .map(|peer| peer.deref().parse().unwrap());
-
     if let Some(initial_peer) = may_initial_peer {
         tracing::info!("Dialing to an well-known peer");
         swarm.dial(initial_peer)?;
@@ -102,13 +88,17 @@ async fn main() -> Result<()> {
     swarm
         .behaviour_mut()
         .kademlia
-        .set_mode(Some(if arg_server_client == "server" {kad::Mode::Server} else {kad::Mode::Client}));
+        .set_mode(if network_mode == NetworkMode::Server {
+            Some(kad::Mode::Server)
+        } else {
+            Some(kad::Mode::Client)
+        });
 
     let mut incoming_streams = swarm
         .behaviour()
-        .stream
+        .mirror
         .new_control()
-        .accept(ECHO_PROTOCOL)
+        .accept(MIRROR_PROTOCOL)
         .unwrap();
 
     // Deal with incoming streams.
@@ -144,62 +134,143 @@ async fn main() -> Result<()> {
         }
     });
 
-    // In this demo application, the dialing peer initiates the protocol.
-    if let Some(address) = maybe_server_address {
-        let Some(Protocol::P2p(peer_id)) = address.iter().last() else {
-            anyhow::bail!("Provided address does not end in `/p2p`");
-        };
-
-        tokio::spawn(client_stream_connection_handler(
-            peer_id,
-            swarm.behaviour().stream.new_control(),
-        ));
-    }
-
     // Control thread
     // Poll the swarm to make progress.
     loop {
-        let event = swarm.next().await.expect("never terminates");
+        tokio::select! {
+            command = command_receiver.recv() => {
+                let command = command;
 
-        match event {
-            swarm::SwarmEvent::NewListenAddr { address, .. } => {
-                let listen_address = address.with_p2p(*swarm.local_peer_id()).unwrap();
-                tracing::info!(%listen_address);
+                match command {
+                    Some(NetworkCommand::ConnectMirror(command)) => {
+                        let ConnectMirrorNetworkCommand { peer, response } = command;
+                        tokio::spawn(client_mirror_connection_thread(peer, swarm.behaviour().mirror.new_control(), response));
+                    }
+                    Some(NetworkCommand::ListenMirror) => {
+                        // TODO
+                    }
+                    None => {
+                        tracing::warn!("Command channel closed");
+                        break Ok(());
+                    }
+                }
+            },
+            event = swarm.next() => {
+                let event = event.expect("never terminates");
+                match event {
+                    swarm::SwarmEvent::NewListenAddr { address, .. } => {
+                        let listen_address = address.with_p2p(*swarm.local_peer_id()).unwrap();
+                        tracing::info!(%listen_address);
+                    }
+                    event => tracing::trace!(?event),
+                }
             }
-            event => tracing::trace!(?event),
         }
     }
 }
 
-/// A very simple, `async fn`-based connection handler for our custom echo protocol.
-async fn client_stream_connection_handler(peer: PeerId, mut control: stream::Control) {
-    tracing::info!(%peer, "Starting echo protocol");
+// cargo run <server/client> <wellknown_peer> <dial_peer>.
 
-    loop {
-        tokio::time::sleep(Duration::from_secs(1)).await; // Wait a second between echos.
+#[tokio::main]
+async fn main() -> Result<()> {
+    let arg_server_client = std::env::args().nth(1).unwrap();
+    let arg_wellknown_peer = std::env::args().nth(2);
+    let arg_server_address = std::env::args().nth(3);
 
-        let stream = match control.open_stream(peer, ECHO_PROTOCOL).await {
-            Ok(stream) => stream,
-            Err(error @ stream::OpenStreamError::UnsupportedProtocol(_)) => {
-                tracing::info!(%peer, %error);
-                return;
-            }
-            Err(error) => {
-                // Other errors may be temporary.
-                // In production, something like an exponential backoff / circuit-breaker may be
-                // more appropriate.
-                tracing::debug!(%peer, %error);
-                continue;
-            }
+    let network_mode = match arg_server_client.as_str() {
+        "server" => NetworkMode::Server,
+        "client" => NetworkMode::Client,
+        _ => anyhow::bail!("Invalid argument: expected `server` or `client`"),
+    };
+
+    let wellknown_peer = if let Some(wellknown_peer) = arg_wellknown_peer {
+        Some(wellknown_peer)
+    } else {
+        None
+    };
+
+    let config = Config {
+        wellknown_peers: wellknown_peer
+            .map(|wellknown_peer| vec![wellknown_peer])
+            .unwrap_or(vec![]),
+    };
+
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::builder()
+                .with_default_directive(LevelFilter::DEBUG.into())
+                .from_env()?,
+        )
+        .init();
+
+    let may_server_peerid = arg_server_address
+        .map(|arg| arg.parse::<PeerId>())
+        .transpose()
+        .context("Failed to parse argument as `Multiaddr`")?;
+
+    let may_initial_peer: Option<Multiaddr> = config
+        .get_wellknown_peer()
+        .iter()
+        .choose(&mut rand::thread_rng())
+        .map(|peer| peer.deref().parse().unwrap());
+
+    let (command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
+
+    let network_control_thread = tokio::spawn(network_control_thread(network_mode, command_receiver, may_initial_peer));
+
+    if let Some(server_peerid) = may_server_peerid {
+        let (response_sender, mut response_receiver) = tokio::sync::oneshot::channel();
+        command_sender
+            .send(NetworkCommand::ConnectMirror(ConnectMirrorNetworkCommand {
+                peer: server_peerid,
+                response: response_sender,
+            })).expect("Server thread already exited");
+
+        let stream = response_receiver.await.unwrap().unwrap();
+        let (rx, mut tx) = stream.split();
+
+        let mut stdin_lines = {
+            let stdin = tokio::io::stdin();
+            let reader = tokio::io::BufReader::new(stdin);    
+            reader.lines()
         };
 
-        if let Err(e) = send(stream).await {
-            tracing::warn!(%peer, "Echo protocol failed: {e}");
-            continue;
-        }
+        let mut recv_lines = futures::io::BufReader::new(rx).lines();
 
-        tracing::info!(%peer, "Echo complete!")
+        loop {
+            tokio::select! {
+                stdin_line = stdin_lines.next_line() => {
+                    let stdin_line = stdin_line.expect("stdin closed");
+                    let stdin_line = stdin_line.expect("stdin error");
+                    tx.write_all(stdin_line.as_bytes()).await?;
+                    tx.write("\n".as_bytes()).await?;
+                    tx.flush().await?;
+                    println!("Sent: {}", stdin_line);
+                },
+                recv_line = recv_lines.next() => {
+                    let recv_line = recv_line.expect("recv closed");
+                    let recv_line = recv_line.expect("recv error");
+                    println!("Recv: {}", recv_line);
+                }
+            }
+        }
+    } else {
+        let (result,) = tokio::join!(network_control_thread);
+
+        result??;
     }
+
+    Ok(())
+}
+
+/// A very simple, `async fn`-based connection handler for our custom echo protocol.
+async fn client_mirror_connection_thread(peer: PeerId, mut control: stream::Control, result: tokio::sync::oneshot::Sender<Result<libp2p::Stream>>) {
+    let stream = control.open_stream(peer, MIRROR_PROTOCOL).await;
+
+    result.send(stream.map_err(|e| {
+        tracing::debug!(%peer, %e);
+        anyhow!("Failed to open stream to peer {peer}")
+    })).unwrap();
 }
 
 async fn echo(mut stream: Stream) -> io::Result<usize> {
@@ -209,6 +280,9 @@ async fn echo(mut stream: Stream) -> io::Result<usize> {
 
     loop {
         let read = stream.read(&mut buf).await?;
+
+        tracing::debug!("Echoing {} bytes", read);
+
         if read == 0 {
             return Ok(total);
         }
