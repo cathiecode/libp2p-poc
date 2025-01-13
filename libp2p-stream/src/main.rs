@@ -1,17 +1,16 @@
-use std::{io, ops::Deref, time::Duration};
+use std::{cell::OnceCell, io, ops::Deref, sync::OnceLock, time::Duration};
 
 use anyhow::{anyhow, Context, Result};
-use futures::{io::BufReader, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, StreamExt};
+use futures::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, StreamExt};
 use libp2p::{
     identify, kad,
-    multiaddr::Protocol,
     swarm::{self, NetworkBehaviour},
     Multiaddr, PeerId, Stream, StreamProtocol,
 };
-use libp2p_stream as stream;
+use libp2p_stream::{self as stream, IncomingStreams};
 use rand::{seq::IteratorRandom, RngCore};
-use tokio::io::AsyncBufReadExt as _;
-use tracing::level_filters::LevelFilter;
+use tokio::{io::AsyncBufReadExt as _, task::JoinHandle};
+use tracing::{level_filters::LevelFilter, span};
 use tracing_subscriber::EnvFilter;
 
 const MIRROR_PROTOCOL: StreamProtocol = StreamProtocol::new("/mirror"); // TODO: version number?
@@ -37,9 +36,13 @@ struct ConnectMirrorNetworkCommand {
     response: tokio::sync::oneshot::Sender<Result<libp2p::Stream>>,
 }
 
+struct ListenMirrorNetworkCommand {
+    response: tokio::sync::oneshot::Sender<Result<IncomingStreams>>,
+}
+
 enum NetworkCommand {
     ConnectMirror(ConnectMirrorNetworkCommand),
-    ListenMirror, // TODO
+    ListenMirror(ListenMirrorNetworkCommand),
 }
 
 type NetworkCommandSender = tokio::sync::mpsc::UnboundedSender<NetworkCommand>;
@@ -60,7 +63,6 @@ async fn network_control_thread(
     let mut swarm = libp2p::SwarmBuilder::with_new_identity()
         .with_tokio()
         .with_quic()
-        // .with_tcp(libp2p::tcp::Config::default(), libp2p::noise::Config::new, libp2p::yamux::Config::default)?
         .with_behaviour(|key| {
             Ok(Behaviour {
                 kademlia: kad::Behaviour::new(
@@ -94,45 +96,14 @@ async fn network_control_thread(
             Some(kad::Mode::Client)
         });
 
-    let mut incoming_streams = swarm
-        .behaviour()
-        .mirror
-        .new_control()
-        .accept(MIRROR_PROTOCOL)
-        .unwrap();
-
-    // Deal with incoming streams.
-    // Spawning a dedicated task is just one way of doing this.
-    // libp2p doesn't care how you handle incoming streams but you _must_ handle them somehow.
-    // To mitigate DoS attacks, libp2p will internally drop incoming streams if your application
-    // cannot keep up processing them.
-    tokio::spawn(async move {
-        // This loop handles incoming streams _sequentially_ but that doesn't have to be the case.
-        // You can also spawn a dedicated task per stream if you want to.
-        // Be aware that this breaks backpressure though as spawning new tasks is equivalent to an
-        // unbounded buffer. Each task needs memory meaning an aggressive remote peer may
-        // force you OOM this way.
-
-        loop {
-            match incoming_streams.next().await {
-                Some((peer, stream)) => {
-                    match echo(stream).await {
-                        Ok(n) => {
-                            tracing::info!(%peer, "Echoed {n} bytes!");
-                        }
-                        Err(e) => {
-                            tracing::warn!(%peer, "Echo failed: {e}");
-                            continue;
-                        }
-                    };
-                }
-                None => {
-                    tracing::warn!("Incoming stream pipe broken");
-                    break;
-                }
-            }
-        }
-    });
+    let mut incoming_streams = Some(
+        swarm
+            .behaviour()
+            .mirror
+            .new_control()
+            .accept(MIRROR_PROTOCOL)
+            .unwrap(),
+    );
 
     // Control thread
     // Poll the swarm to make progress.
@@ -146,8 +117,17 @@ async fn network_control_thread(
                         let ConnectMirrorNetworkCommand { peer, response } = command;
                         tokio::spawn(client_mirror_connection_thread(peer, swarm.behaviour().mirror.new_control(), response));
                     }
-                    Some(NetworkCommand::ListenMirror) => {
-                        // TODO
+                    Some(NetworkCommand::ListenMirror(command)) => {
+                        let ListenMirrorNetworkCommand { response } = command;
+
+                        let incoming_streams = incoming_streams.take();
+
+                        if incoming_streams.is_none() {
+                            response.send(Err(anyhow!("Incoming stream already taken"))).map_err(|_| anyhow!("Failed to send incoming streams")).unwrap();
+                            continue;
+                        }
+
+                        response.send(Ok(incoming_streams.unwrap())).map_err(|_| anyhow!("Failed to send incoming streams")).unwrap();
                     }
                     None => {
                         tracing::warn!("Command channel closed");
@@ -166,6 +146,105 @@ async fn network_control_thread(
                 }
             }
         }
+    }
+}
+
+static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+
+fn get_tokio_runtime() -> &'static tokio::runtime::Runtime {
+    RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("Failed to create runtime")
+    })
+}
+
+struct MirrorClient {
+    stream: libp2p::Stream,
+}
+
+impl MirrorClient {
+    async fn read(&mut self, buffer: &mut [u8], offset: usize, count: usize) -> Result<usize> {
+        self.stream
+            .read(&mut buffer[offset..offset + count])
+            .await
+            .map_err(|_| anyhow!("Failed to read stream"))
+    }
+
+    async fn write(&mut self, buffer: &[u8], offset: usize, count: usize) -> Result<()> {
+        self.stream
+            .write_all(&buffer[offset..offset + count])
+            .await
+            .map_err(|_| anyhow!("Failed to write to stream"))
+    }
+}
+
+struct MirrorListener {
+    incoming_streams: IncomingStreams,
+}
+
+impl MirrorListener {
+    async fn accept(&mut self) -> Result<MirrorClient> {
+        // FIXME: Use stream itself?
+        match self.incoming_streams.next().await {
+            Some((peer, stream)) => Ok(MirrorClient { stream }),
+            None => {
+                tracing::warn!("Incoming stream closed");
+                Err(anyhow!("Incoming stream closed"))
+            }
+        }
+    }
+}
+
+struct NetworkContext {
+    command_sender: NetworkCommandSender,
+    network_thread: JoinHandle<std::result::Result<(), anyhow::Error>>,
+}
+
+impl NetworkContext {
+    fn new(network_mode: NetworkMode, initial_peer: Option<Multiaddr>) -> Self {
+        let (command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
+
+        // TODO: join support
+        let network_thread: JoinHandle<std::result::Result<(), anyhow::Error>> = tokio::spawn(
+            network_control_thread(network_mode, command_receiver, initial_peer),
+        );
+
+        Self {
+            command_sender,
+            network_thread,
+        }
+    }
+
+    async fn connect_mirror(&self, peer: PeerId) -> Result<MirrorClient> {
+        let (response_sender, response_receiver) = tokio::sync::oneshot::channel();
+        self.command_sender
+            .send(NetworkCommand::ConnectMirror(ConnectMirrorNetworkCommand {
+                peer,
+                response: response_sender,
+            }))?;
+
+        let stream = response_receiver.await.unwrap()?;
+
+        Ok(MirrorClient { stream })
+    }
+
+    async fn listen_mirror(&self) -> Result<MirrorListener> {
+        let (response_sender, response_receiver) = tokio::sync::oneshot::channel();
+        self.command_sender
+            .send(NetworkCommand::ListenMirror(ListenMirrorNetworkCommand {
+                response: response_sender,
+            }))?;
+
+        let incoming_streams = response_receiver.await.unwrap()?;
+
+        Ok(MirrorListener { incoming_streams })
+    }
+
+    async fn wait(self) -> Result<()> {
+        tokio::join!(self.network_thread).0??;
+        Ok(())
     }
 }
 
@@ -203,7 +282,7 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    let may_server_peerid = arg_server_address
+    let may_server_peer = arg_server_address
         .map(|arg| arg.parse::<PeerId>())
         .transpose()
         .context("Failed to parse argument as `Multiaddr`")?;
@@ -214,25 +293,15 @@ async fn main() -> Result<()> {
         .choose(&mut rand::thread_rng())
         .map(|peer| peer.deref().parse().unwrap());
 
-    let (command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
+    let network = NetworkContext::new(network_mode, may_initial_peer);
 
-    let network_control_thread = tokio::spawn(network_control_thread(
-        network_mode,
-        command_receiver,
-        may_initial_peer,
-    ));
+    if let Some(server_peer) = may_server_peer {
+        let span = span!(tracing::Level::INFO, "client", %server_peer);
+        let _enter = span.enter();
+        let mut client = network.connect_mirror(server_peer).await?;
 
-    if let Some(server_peerid) = may_server_peerid {
-        let (response_sender, mut response_receiver) = tokio::sync::oneshot::channel();
-        command_sender
-            .send(NetworkCommand::ConnectMirror(ConnectMirrorNetworkCommand {
-                peer: server_peerid,
-                response: response_sender,
-            }))
-            .expect("Server thread already exited");
-
-        let stream = response_receiver.await.unwrap().unwrap();
-        let (rx, mut tx) = stream.split();
+        let mut recv_buffer = [0u8; 100];
+        let mut send_buffer = [0u8; 100];
 
         let mut stdin_lines = {
             let stdin = tokio::io::stdin();
@@ -240,29 +309,42 @@ async fn main() -> Result<()> {
             reader.lines()
         };
 
-        let mut recv_lines = futures::io::BufReader::new(rx).lines();
+        tracing::info!("Connected to server");
 
         loop {
             tokio::select! {
-                stdin_line = stdin_lines.next_line() => {
-                    let stdin_line = stdin_line.expect("stdin closed");
-                    let stdin_line = stdin_line.expect("stdin error");
-                    tx.write_all(stdin_line.as_bytes()).await?;
-                    tx.write("\n".as_bytes()).await?;
-                    tx.flush().await?;
-                    println!("Sent: {}", stdin_line);
-                },
-                recv_line = recv_lines.next() => {
-                    let recv_line = recv_line.expect("recv closed");
-                    let recv_line = recv_line.expect("recv error");
-                    println!("Recv: {}", recv_line);
+                read_count = client.read(&mut recv_buffer, 0, 100) => {
+                    match read_count {
+                        Ok(0) => {
+                            tracing::info!("Connection closed");
+                            break;
+                        }
+                        Ok(n) => {
+                            tracing::info!("Received {} bytes", n);
+                        }
+                        Err(e) => {
+                            tracing::error!(%e);
+                            break;
+                        }
+                    }
+                }
+
+                stdin = stdin_lines.next_line() => {
+                    let stdin = stdin.expect("stdin closed");
+                    let stdin = stdin.expect("stdin error");
+
+                    client.write(&stdin.as_bytes(), 0, stdin.as_bytes().len()).await?;
                 }
             }
         }
     } else {
-        let (result,) = tokio::join!(network_control_thread);
+        let mut listener = network.listen_mirror().await?;
 
-        result??;
+        while let Ok(client) = listener.accept().await {
+            // FIXME: OOM when client count is too much
+            tokio::spawn(echo(client.stream));
+        }
+        network.wait().await?;
     }
 
     Ok(())
