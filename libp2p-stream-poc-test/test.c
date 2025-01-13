@@ -6,17 +6,16 @@ void callback(const char *msg) {
     printf("Received message: %s\n", msg);
 }
 
-void main(void) {
-    init();
-    struct NetworkContext *context = create_context();
-    on_receive(context, &callback);
-    printf("Counter: %d\n", get_counter(context));
-    increment_counter(context);
-    printf("Counter: %d\n", get_counter(context));
-
-    while (1) {
-        update(context);
-        sleep(1);
+void main(int argc, char **argv) {
+    if (argc < 2)  {
+        printf("Usage: %s <peer>\n", argv[0]);
+        return;
     }
+
+    init();
+    struct NetworkContext *context = create_context(argv[1]);
+
+    sleep(100);
+
     destroy_context(context);
 }

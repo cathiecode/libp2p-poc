@@ -7,7 +7,7 @@ use futures::{AsyncReadExt as _, AsyncWriteExt as _};
 use libp2p::{Multiaddr, PeerId, Stream};
 use network::*;
 use rand::{seq::IteratorRandom as _, RngCore as _};
-use result::{CommonError, FfiResult};
+use result::{ffi_err, ffi_ok, CommonError, FfiResult};
 use std::{ffi::{CStr, CString}, ops::Deref};
 use tokio::io::{self, AsyncBufReadExt as _};
 use tracing::{level_filters::LevelFilter, span};
@@ -163,27 +163,33 @@ async fn send(mut stream: Stream) -> io::Result<()> {
 }
 
 #[no_mangle]
-pub extern "C" fn init() -> FfiResult<(), CommonError> {
+pub extern "C" fn init() -> FfiResult {
     let env_filter = EnvFilter::builder()
         .with_default_directive(LevelFilter::DEBUG.into())
         .from_env();
 
     if let Err(e) = env_filter {
-        return FfiResult::new_err(CommonError::Unknown);
+        return CommonError::Unknown.into();
     }
 
     let env_filter = env_filter.unwrap();
 
     tracing_subscriber::fmt().with_env_filter(env_filter).init();
 
-    FfiResult::new_ok(())
+    return 1;
 }
 
 #[no_mangle]
-pub extern "C" fn create_context(initial_peer: Option<CString>) -> *mut NetworkContext {
+pub extern "C" fn create_context(initial_peer: *const std::ffi::c_char) -> *mut NetworkContext {
+    let initial_peer: Option<String> = if initial_peer.is_null() {
+        None
+    } else {
+        Some(unsafe { CStr::from_ptr(initial_peer) }.to_str().unwrap().to_string())
+    };
+
     Box::into_raw(safe_interface::create_context(
         NetworkMode::Client,
-        initial_peer.map(|peer| peer.into_string().unwrap()),
+        initial_peer,
     ))
 }
 
@@ -204,16 +210,21 @@ pub extern "C" fn destroy_context(ptr: *mut NetworkContext) {
 pub extern "C" fn connect_mirror(
     context: *mut NetworkContext,
     peer: *const std::ffi::c_char,
-) -> FfiResult<*mut MirrorClient, CommonError> {
+    mirror_client: *mut *mut MirrorClient,
+) -> FfiResult {
     if context.is_null() {
-        return FfiResult::new_err(CommonError::InvalidInput);
+        return ffi_err(CommonError::InvalidInput);
     }
 
     let context = unsafe { &mut *context };
     let peer = unsafe { CStr::from_ptr(peer).to_str().unwrap() };
     let client = safe_interface::connect_mirror(context, peer).unwrap();
 
-    FfiResult::new_ok(Box::into_raw(client))
+    unsafe {
+        *mirror_client = Box::into_raw(client);
+    }
+
+    ffi_ok(0)
 }
 
 #[no_mangle]
@@ -222,16 +233,19 @@ pub extern "C" fn read_mirror_client(
     buffer: *mut u8,
     offset: usize,
     count: usize,
-) -> usize {
+) -> FfiResult {
     if mirror_client.is_null() {
-        return 0;
+        return ffi_err(CommonError::InvalidInput);
     }
 
     let mirror_client = unsafe { &mut *mirror_client };
 
     let buffer = unsafe { std::slice::from_raw_parts_mut(buffer, count) };
 
-    safe_interface::read_mirror_client(mirror_client, buffer, offset, count).unwrap()
+    match safe_interface::read_mirror_client(mirror_client, buffer, offset, count) {
+        Ok(result) => ffi_ok(result as u32),
+        Err(_) => ffi_err(CommonError::Unknown),
+    }
 }
 
 #[no_mangle]
@@ -240,14 +254,17 @@ pub extern "C" fn write_mirror_client(
     buffer: *const u8,
     offset: usize,
     count: usize,
-) {
+) -> FfiResult {
     if mirror_client.is_null() {
-        return;
+        return ffi_err(CommonError::InvalidInput);
     }
 
     let mirror_client = unsafe { &mut *mirror_client };
 
     let buffer = unsafe { std::slice::from_raw_parts(buffer, count) };
 
-    safe_interface::write_mirror_client(mirror_client, buffer, offset, count).unwrap();
+    match safe_interface::write_mirror_client(mirror_client, buffer, offset, count) {
+        Ok(_) => ffi_ok(0),
+        Err(_) => ffi_err(CommonError::Unknown),
+    }
 }

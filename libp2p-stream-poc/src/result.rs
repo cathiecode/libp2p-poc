@@ -1,64 +1,28 @@
-use anyhow::Error;
 use thiserror::Error;
 
-#[repr(C)]
 #[derive(Debug, Error, Copy, Clone)]
 pub enum CommonError {
     #[error("Unknown error")]
-    Unknown,
+    Unknown = 1,
     #[error("Invalid input")]
-    InvalidInput,
+    InvalidInput = 2,
 }
 
-#[repr(C)]
-pub struct FfiResult<T, E> where T: Copy, E: Copy{
-    is_ok: bool,
-    body: FfiResultBody<T, E>,
-}
+pub type FfiResult = i32;
 
-impl<T, E> FfiResult<T, E> where T: Copy, E: Copy {
-    pub fn new_ok(body: T) -> Self {
-        Self {
-            is_ok: true,
-            body: FfiResultBody {
-                ok: body,
-            },
-        }
-    }
-
-    pub fn new_err(message: E) -> Self {
-        Self {
-            is_ok: false,
-            body: FfiResultBody {
-                err: message,
-            },
-        }
+impl From<CommonError> for FfiResult {
+    #[inline]
+    fn from(value: CommonError) -> Self {
+        -(value as i32)
     }
 }
 
-#[repr(C)]
-pub union FfiResultBody<T, E> where T: Copy, E: Copy {
-    ok: T,
-    err: E,
+#[inline]
+pub fn ffi_ok(result: u32) -> i32 {
+    result as i32
 }
 
-impl<T> From<std::result::Result<T, Error>> for FfiResult<T, CommonError> where T: Copy{
-    fn from(value: std::result::Result<T, Error>) -> Self {
-        match value {
-            Ok(ok) => FfiResult {
-                is_ok: true,
-                body: FfiResultBody {
-                    ok,
-                },
-            },
-            Err(err) => FfiResult {
-                is_ok: false,
-                body: err.downcast_ref::<CommonError>().map_or(FfiResultBody {
-                    err: CommonError::Unknown,
-                }, |err| FfiResultBody {
-                    err: *err,
-                }),
-            },
-        }
-    }
+#[inline]
+pub fn ffi_err(error: CommonError) -> i32 {
+    error.into()
 }
