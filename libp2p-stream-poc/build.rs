@@ -1,4 +1,5 @@
 fn main() {
+    /*
     csbindgen::Builder::default()
         .input_extern_file("src/lib.rs")
         .csharp_dll_name("example")
@@ -11,4 +12,5 @@ fn main() {
         .generate()
         .expect("Unable to generate bindings")
         .write_to_file("bindings/c/libp2p_stream_poc.h");
+    // */
 }
