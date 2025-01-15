@@ -36,16 +36,12 @@ async fn main() -> Result<()> {
         _ => anyhow::bail!("Invalid argument: expected `server` or `client`"),
     };
 
-    let wellknown_peer = if let Some(wellknown_peer) = arg_wellknown_peer {
-        Some(wellknown_peer)
-    } else {
-        None
-    };
+    let wellknown_peer = arg_wellknown_peer;
 
     let config = Config {
         wellknown_peers: wellknown_peer
             .map(|wellknown_peer| vec![wellknown_peer])
-            .unwrap_or(vec![]),
+            .unwrap_or_default(),
     };
 
     tracing_subscriber::fmt()
@@ -75,7 +71,7 @@ async fn main() -> Result<()> {
         let mut client = network.connect_mirror(server_peer).await?;
 
         let mut recv_buffer = [0u8; 100];
-        let mut send_buffer = [0u8; 100];
+        let send_buffer = [0u8; 100];
 
         let mut stdin_lines = {
             let stdin = tokio::io::stdin();
@@ -107,7 +103,7 @@ async fn main() -> Result<()> {
                     let stdin = stdin.expect("stdin closed");
                     let stdin = stdin.expect("stdin error");
 
-                    client.write(&stdin.as_bytes(), 0, stdin.as_bytes().len()).await?;
+                    client.write(stdin.as_bytes(), 0, stdin.as_bytes().len()).await?;
                 }
             }
         }
@@ -177,7 +173,7 @@ pub extern "C" fn init() -> FfiResult {
 
     tracing_subscriber::fmt().with_env_filter(env_filter).init();
 
-    return 1;
+    1
 }
 
 #[no_mangle]
@@ -260,7 +256,7 @@ pub extern "C" fn read_mirror_client(
     let buffer = unsafe { std::slice::from_raw_parts_mut(buffer, count) };
 
     match safe_interface::read_mirror_client(mirror_client, buffer, offset, count) {
-        Ok(result) => ffi_result_ok(result as u32),
+        Ok(result) => ffi_result_ok(result),
         Err(e) => ffi_result_err(convert_ffi_error(e, 1148)),
     }
 }

@@ -1,19 +1,16 @@
 use std::time::Duration;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use futures::{AsyncReadExt, AsyncWriteExt, StreamExt};
 use libp2p::{
     identify, kad,
     swarm::{self, NetworkBehaviour},
-    Multiaddr, PeerId, Stream, StreamProtocol,
+    Multiaddr, PeerId, StreamProtocol,
 };
 use libp2p_stream::{self as stream, IncomingStreams};
-use rand::{seq::IteratorRandom, RngCore};
-use tokio::{io::AsyncBufReadExt as _, task::JoinHandle};
-use tracing::{level_filters::LevelFilter, span};
-use tracing_subscriber::EnvFilter;
+use tokio::task::JoinHandle;
 
-use crate::result::{convert_ffi_error, ffi_result_err, map_ffi_error, CommonError};
+use crate::result::{map_ffi_error, CommonError};
 
 const MIRROR_PROTOCOL: StreamProtocol = StreamProtocol::new("/mirror"); // TODO: version number?
 
