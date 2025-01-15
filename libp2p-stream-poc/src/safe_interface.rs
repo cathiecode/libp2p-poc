@@ -11,15 +11,14 @@ static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
 });
 
 pub fn create_context(mode: NetworkMode, initial_peer: Option<String>) -> Box<NetworkContext> {
-    let network_mode = NetworkMode::Client; // TODO
     let initial_peer = initial_peer.map(|peer| peer.parse().unwrap());
 
     let _runtime = (*RUNTIME).enter();
 
-    Box::new(NetworkContext::new(network_mode, initial_peer))
+    Box::new(NetworkContext::new(mode, initial_peer))
 }
 
-pub fn destroy_context(context: &mut NetworkContext) {
+pub fn destroy_context(_context: &mut NetworkContext) {
     // TODO
 }
 

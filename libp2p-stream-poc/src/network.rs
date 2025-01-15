@@ -188,7 +188,7 @@ impl MirrorListener {
     pub async fn accept(&mut self) -> Result<MirrorClient> {
         // FIXME: Use stream itself?
         match self.incoming_streams.next().await {
-            Some((peer, stream)) => Ok(MirrorClient { stream }),
+            Some((_peer, stream)) => Ok(MirrorClient { stream }),
             None => {
                 tracing::warn!("Incoming stream closed");
                 Err(anyhow!("Incoming stream closed"))
