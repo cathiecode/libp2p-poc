@@ -29,7 +29,7 @@ pub extern "C" fn init() -> FfiResult {
 /// # Safety
 /// All pointers must be a valid pointer.
 #[no_mangle]
-pub unsafe extern "C" fn create_context(initial_peer: *const std::ffi::c_char) -> *mut NetworkContext {
+pub unsafe extern "C" fn create_context(initial_peer: *const std::ffi::c_char, context_placeholder: *mut *mut NetworkContext) -> FfiResult {
     let initial_peer: Option<String> = if initial_peer.is_null() {
         None
     } else {
@@ -41,10 +41,19 @@ pub unsafe extern "C" fn create_context(initial_peer: *const std::ffi::c_char) -
         )
     };
 
-    Box::into_raw(safe_interface::create_context(
+    match safe_interface::create_context(
         NetworkMode::Client,
         initial_peer,
-    ))
+    ) {
+        Ok(context) => {
+            unsafe {
+                *context_placeholder = Box::into_raw(context);
+            }
+
+            ffi_result_ok(0)
+        }
+        Err(e) => ffi_result_err(convert_ffi_error(e, 38)),
+    }
 }
 
 /// # Safety

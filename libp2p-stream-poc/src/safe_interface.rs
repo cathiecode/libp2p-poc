@@ -10,12 +10,17 @@ static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
         .expect("Failed to create runtime")
 });
 
-pub fn create_context(mode: NetworkMode, initial_peer: Option<String>) -> Box<NetworkContext> {
-    let initial_peer = initial_peer.map(|peer| peer.parse().unwrap());
+pub fn create_context(
+    mode: NetworkMode,
+    initial_peer: Option<String>,
+) -> Result<Box<NetworkContext>> {
+    let initial_peer = initial_peer
+        .map(|peer| peer.parse().map_err(|_| CommonError::InvalidInput))
+        .transpose()?;
 
     let _runtime = (*RUNTIME).enter();
 
-    Box::new(NetworkContext::new(mode, initial_peer))
+    Ok(Box::new(NetworkContext::new(mode, initial_peer)))
 }
 
 pub fn destroy_context(_context: &mut NetworkContext) {
