@@ -1,7 +1,9 @@
 pub mod network;
 pub mod result;
 pub mod safe_interface;
-mod test;
+
+#[cfg(test)]
+mod tests;
 
 use network::*;
 use result::{convert_ffi_error, ffi_result_err, ffi_result_ok, CommonError, FfiResult};
