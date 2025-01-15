@@ -1,16 +1,17 @@
 mod network;
 mod result;
 mod safe_interface;
+mod test;
 
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result};
 use futures::{AsyncReadExt as _, AsyncWriteExt as _};
 use libp2p::{Multiaddr, PeerId, Stream};
 use network::*;
 use rand::{seq::IteratorRandom as _, RngCore as _};
-use result::{ffi_err, ffi_ok, CommonError, FfiResult};
-use std::{ffi::{CStr, CString}, ops::Deref};
+use result::{convert_ffi_error, ffi_result_err, ffi_result_ok, CommonError, FfiResult};
+use std::{ffi::CStr, ops::Deref};
 use tokio::io::{self, AsyncBufReadExt as _};
-use tracing::{level_filters::LevelFilter, span};
+use tracing::{instrument, level_filters::LevelFilter, span};
 use tracing_subscriber::EnvFilter;
 
 struct Config {
@@ -169,7 +170,7 @@ pub extern "C" fn init() -> FfiResult {
         .from_env();
 
     if let Err(e) = env_filter {
-        return CommonError::Unknown.into();
+        return ffi_result_err(CommonError::LogicError(22));
     }
 
     let env_filter = env_filter.unwrap();
@@ -184,7 +185,12 @@ pub extern "C" fn create_context(initial_peer: *const std::ffi::c_char) -> *mut 
     let initial_peer: Option<String> = if initial_peer.is_null() {
         None
     } else {
-        Some(unsafe { CStr::from_ptr(initial_peer) }.to_str().unwrap().to_string())
+        Some(
+            unsafe { CStr::from_ptr(initial_peer) }
+                .to_str()
+                .unwrap()
+                .to_string(),
+        )
     };
 
     Box::into_raw(safe_interface::create_context(
@@ -206,6 +212,7 @@ pub extern "C" fn destroy_context(ptr: *mut NetworkContext) {
     }
 }
 
+#[instrument]
 #[no_mangle]
 pub extern "C" fn connect_mirror(
     context: *mut NetworkContext,
@@ -213,18 +220,28 @@ pub extern "C" fn connect_mirror(
     mirror_client: *mut *mut MirrorClient,
 ) -> FfiResult {
     if context.is_null() {
-        return ffi_err(CommonError::InvalidInput);
+        return ffi_result_err(CommonError::InvalidInput);
     }
+
+    tracing::debug!("Connecting to mirror");
 
     let context = unsafe { &mut *context };
     let peer = unsafe { CStr::from_ptr(peer).to_str().unwrap() };
-    let client = safe_interface::connect_mirror(context, peer).unwrap();
+
+    let client: Box<MirrorClient> = match safe_interface::connect_mirror(context, peer) {
+        Ok(client) => client,
+        Err(e) => {
+            return ffi_result_err(convert_ffi_error(e, 5802));
+        }
+    };
 
     unsafe {
         *mirror_client = Box::into_raw(client);
     }
 
-    ffi_ok(0)
+    tracing::debug!("Connected to mirror");
+
+    ffi_result_ok(0)
 }
 
 #[no_mangle]
@@ -235,7 +252,7 @@ pub extern "C" fn read_mirror_client(
     count: usize,
 ) -> FfiResult {
     if mirror_client.is_null() {
-        return ffi_err(CommonError::InvalidInput);
+        return ffi_result_err(CommonError::InvalidInput);
     }
 
     let mirror_client = unsafe { &mut *mirror_client };
@@ -243,8 +260,8 @@ pub extern "C" fn read_mirror_client(
     let buffer = unsafe { std::slice::from_raw_parts_mut(buffer, count) };
 
     match safe_interface::read_mirror_client(mirror_client, buffer, offset, count) {
-        Ok(result) => ffi_ok(result as u32),
-        Err(_) => ffi_err(CommonError::Unknown),
+        Ok(result) => ffi_result_ok(result as u32),
+        Err(e) => ffi_result_err(convert_ffi_error(e, 1148)),
     }
 }
 
@@ -256,7 +273,7 @@ pub extern "C" fn write_mirror_client(
     count: usize,
 ) -> FfiResult {
     if mirror_client.is_null() {
-        return ffi_err(CommonError::InvalidInput);
+        return ffi_result_err(CommonError::InvalidInput);
     }
 
     let mirror_client = unsafe { &mut *mirror_client };
@@ -264,7 +281,7 @@ pub extern "C" fn write_mirror_client(
     let buffer = unsafe { std::slice::from_raw_parts(buffer, count) };
 
     match safe_interface::write_mirror_client(mirror_client, buffer, offset, count) {
-        Ok(_) => ffi_ok(0),
-        Err(_) => ffi_err(CommonError::Unknown),
+        Ok(result) => ffi_result_ok(result),
+        Err(e) => ffi_result_err(convert_ffi_error(e, 3617)),
     }
 }

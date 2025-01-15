@@ -369,12 +369,12 @@ async fn client_mirror_connection_thread(
 async fn echo(mut stream: Stream) -> io::Result<usize> {
     let mut total = 0;
 
-    let mut buf = [0u8; 100];
+    let mut buf = [0u8; 2048];
 
     loop {
         let read = stream.read(&mut buf).await?;
 
-        tracing::debug!("Echoing {} bytes", read);
+        tracing::trace!("Echoing {} bytes", read);
 
         if read == 0 {
             return Ok(total);

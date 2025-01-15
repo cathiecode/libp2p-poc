@@ -1,4 +1,4 @@
-use std::{io, ops::Deref, sync::OnceLock, time::Duration};
+use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use futures::{AsyncReadExt, AsyncWriteExt, StreamExt};
@@ -12,6 +12,8 @@ use rand::{seq::IteratorRandom, RngCore};
 use tokio::{io::AsyncBufReadExt as _, task::JoinHandle};
 use tracing::{level_filters::LevelFilter, span};
 use tracing_subscriber::EnvFilter;
+
+use crate::result::{convert_ffi_error, ffi_result_err, map_ffi_error, CommonError};
 
 const MIRROR_PROTOCOL: StreamProtocol = StreamProtocol::new("/mirror"); // TODO: version number?
 
@@ -145,14 +147,16 @@ async fn client_mirror_connection_thread(
     mut control: stream::Control,
     result: tokio::sync::oneshot::Sender<Result<libp2p::Stream>>,
 ) {
-    let stream = control.open_stream(peer, MIRROR_PROTOCOL).await;
-
-    result
-        .send(stream.map_err(|e| {
+    tracing::debug!(%peer, "Opening stream to peer");
+    let stream = control
+        .open_stream(peer, MIRROR_PROTOCOL)
+        .await
+        .map_err(|e| {
             tracing::debug!(%peer, %e);
-            anyhow!("Failed to open stream to peer {peer}")
-        }))
-        .unwrap();
+            CommonError::FailedToConnect.into()
+        });
+
+    result.send(stream).unwrap();
 }
 
 pub struct MirrorClient {
@@ -222,9 +226,13 @@ impl NetworkContext {
             .send(NetworkCommand::ConnectMirror(ConnectMirrorNetworkCommand {
                 peer,
                 response: response_sender,
-            }))?;
+            }))
+            .map_err(|_| CommonError::LogicError(56))?;
 
-        let stream = response_receiver.await.unwrap()?;
+        let stream = response_receiver
+            .await
+            .map_err(|_| CommonError::LogicError(72))?
+            .map_err(map_ffi_error(88))?;
 
         Ok(MirrorClient { stream })
     }
