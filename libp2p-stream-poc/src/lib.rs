@@ -73,6 +73,28 @@ pub unsafe extern "C" fn destroy_context(ptr: *mut NetworkContext) {
     }
 }
 
+#[instrument]
+#[no_mangle]
+pub unsafe extern "C" fn listen_mirror(
+    context: *mut NetworkContext,
+) -> FfiResult {
+    if context.is_null() {
+        return ffi_result_err(CommonError::InvalidInput);
+    }
+
+    tracing::debug!("Listening for mirror");
+
+    let context = unsafe { &mut *context };
+
+    match safe_interface::listen_mirror(context) {
+        Ok(_) => {
+            tracing::debug!("Listening for mirror");
+            ffi_result_ok(0)
+        }
+        Err(e) => ffi_result_err(convert_ffi_error(e, 5802)),
+    }
+}
+
 /// # Safety
 /// All pointers must be a valid pointer.
 #[instrument]

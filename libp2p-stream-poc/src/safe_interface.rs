@@ -39,6 +39,14 @@ pub fn connect_mirror(context: &mut NetworkContext, peer: &str) -> Result<Box<Mi
     Ok(Box::new(client))
 }
 
+pub fn listen_mirror(context: &mut NetworkContext) -> Result<()> {
+    (*RUNTIME)
+        .block_on(context.listen_mirror())
+        .map_err(|e| convert_ffi_error(e, 5802))?;
+
+    Ok(())
+}
+
 pub fn read_mirror_client(
     mirror_client: &mut MirrorClient,
     buffer: &mut [u8],
