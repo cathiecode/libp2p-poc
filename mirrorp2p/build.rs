@@ -1,8 +1,8 @@
 fn main() {
     csbindgen::Builder::default()
         .input_extern_file("src/lib.rs")
-        .csharp_dll_name("example")
-        .csharp_class_name("MirrorP2P")
+        .csharp_dll_name("mirrorp2p")
+        .csharp_class_name("MirrorP2PNative")
         .csharp_namespace("SuperNeko.MirrorP2P")
         .generate_csharp_file("bindings/dotnet/NativeMethods.g.cs")
         .unwrap();

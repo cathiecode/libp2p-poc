@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
 
 namespace SuperNeko.MirrorP2P {
-    internal static unsafe partial class MirrorP2P {
+    internal static unsafe partial class MirrorP2PNative {
         [StructLayout(LayoutKind.Sequential)]
         internal unsafe partial struct MirrorClient
         {

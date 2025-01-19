@@ -25,7 +25,7 @@ pub extern "C" fn init() -> FfiResult {
 
     tracing_subscriber::fmt().with_env_filter(env_filter).init();
 
-    1
+    0
 }
 
 /// # Safety
