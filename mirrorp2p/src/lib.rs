@@ -77,7 +77,7 @@ pub unsafe extern "C" fn destroy_context(ptr: *mut NetworkContext) {
 #[no_mangle]
 pub unsafe extern "C" fn listen_mirror(
     context: *mut NetworkContext,
-) -> FfiResult {
+) -> i32 {
     if context.is_null() {
         return ffi_result_err(CommonError::InvalidInput);
     }
@@ -103,7 +103,7 @@ pub unsafe extern "C" fn connect_mirror(
     context: *mut NetworkContext,
     peer: *const std::ffi::c_char,
     mirror_client: *mut *mut MirrorClient,
-) -> FfiResult {
+) -> i32 {
     if context.is_null() {
         return ffi_result_err(CommonError::InvalidInput);
     }
@@ -137,7 +137,7 @@ pub unsafe extern "C" fn read_mirror_client(
     buffer: *mut u8,
     offset: usize,
     count: usize,
-) -> FfiResult {
+) -> i32 {
     if mirror_client.is_null() {
         return ffi_result_err(CommonError::InvalidInput);
     }
@@ -160,7 +160,7 @@ pub unsafe extern "C" fn write_mirror_client(
     buffer: *const u8,
     offset: usize,
     count: usize,
-) -> FfiResult {
+) -> i32 {
     if mirror_client.is_null() {
         return ffi_result_err(CommonError::InvalidInput);
     }

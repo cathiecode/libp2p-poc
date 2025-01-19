@@ -3,5 +3,5 @@ resolver = "2"
 
 members = [
     "libp2p-stream",
-    "libp2p-stream-poc"
+    "mirrorp2p"
 ]
