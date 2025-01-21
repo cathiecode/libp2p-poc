@@ -12,15 +12,18 @@ static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
 
 pub fn create_context(
     mode: NetworkMode,
+    identity: &[u8],
     initial_peer: Option<String>,
 ) -> Result<Box<NetworkContext>> {
     let initial_peer = initial_peer
         .map(|peer| peer.parse().map_err(|_| CommonError::InvalidInput))
         .transpose()?;
 
+    let identity = identity.to_vec();
+
     let _runtime = (*RUNTIME).enter();
 
-    Ok(Box::new(NetworkContext::new(mode, initial_peer)))
+    Ok(Box::new(NetworkContext::new(mode, identity, initial_peer)))
 }
 
 pub fn destroy_context(_context: &mut NetworkContext) {

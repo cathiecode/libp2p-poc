@@ -12,7 +12,7 @@ use tracing::{instrument, level_filters::LevelFilter};
 use tracing_subscriber::EnvFilter;
 
 #[no_mangle]
-pub extern "C" fn init() -> FfiResult {
+pub extern "C" fn init(/*logger: extern "C" fn (*const std::ffi::c_char) -> ()*/) -> FfiResult {
     let env_filter = EnvFilter::builder()
         .with_default_directive(LevelFilter::DEBUG.into())
         .from_env();
@@ -23,7 +23,11 @@ pub extern "C" fn init() -> FfiResult {
 
     let env_filter = env_filter.unwrap();
 
-    tracing_subscriber::fmt().with_env_filter(env_filter).init();
+    static ONCE: std::sync::Once = std::sync::Once::new();
+
+    ONCE.call_once(|| {
+        tracing_subscriber::fmt().with_env_filter(env_filter).init();
+    });
 
     0
 }
@@ -31,7 +35,7 @@ pub extern "C" fn init() -> FfiResult {
 /// # Safety
 /// All pointers must be a valid pointer.
 #[no_mangle]
-pub unsafe extern "C" fn create_context(initial_peer: *const std::ffi::c_char, context_placeholder: *mut *mut NetworkContext) -> FfiResult {
+pub unsafe extern "C" fn create_context(identity: *const std::ffi::c_uchar, identity_len: std::ffi::c_ushort, initial_peer: *const std::ffi::c_char, context_placeholder: *mut *mut NetworkContext) -> FfiResult {
     let initial_peer: Option<String> = if initial_peer.is_null() {
         None
     } else {
@@ -43,8 +47,11 @@ pub unsafe extern "C" fn create_context(initial_peer: *const std::ffi::c_char, c
         )
     };
 
+    let identity = std::slice::from_raw_parts(identity, identity_len.into());
+
     match safe_interface::create_context(
         NetworkMode::Client,
+        identity,
         initial_peer,
     ) {
         Ok(context) => {

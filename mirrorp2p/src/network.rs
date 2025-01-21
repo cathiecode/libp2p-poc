@@ -46,10 +46,13 @@ pub struct Behaviour {
 
 async fn network_control_thread(
     network_mode: NetworkMode,
+    mut identity: Vec<u8>,
     mut command_receiver: NetworkCommandReceiver,
     may_initial_peer: Option<Multiaddr>,
 ) -> Result<()> {
-    let mut swarm = libp2p::SwarmBuilder::with_new_identity()
+
+    let identity = libp2p::identity::ed25519::Keypair::try_from_bytes(&mut identity)?.into();
+    let mut swarm = libp2p::SwarmBuilder::with_existing_identity(identity)
         .with_tokio()
         .with_quic()
         .with_behaviour(|key| {
@@ -65,7 +68,9 @@ async fn network_control_thread(
                 )),
             })
         })?
-        .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(10)))
+        .with_swarm_config(|c| {
+            c.with_idle_connection_timeout(Duration::from_secs(10))
+        })
         .build();
 
     swarm.listen_on("/ip4/0.0.0.0/udp/0/quic-v1".parse()?)?;
@@ -203,12 +208,12 @@ pub struct NetworkContext {
 }
 
 impl NetworkContext {
-    pub fn new(network_mode: NetworkMode, initial_peer: Option<Multiaddr>) -> Self {
+    pub fn new(network_mode: NetworkMode, identity: Vec<u8>, initial_peer: Option<Multiaddr>) -> Self {
         let (command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
 
         // TODO: join support
         let network_thread: JoinHandle<std::result::Result<(), anyhow::Error>> = tokio::spawn(
-            network_control_thread(network_mode, command_receiver, initial_peer),
+            network_control_thread(network_mode, identity, command_receiver, initial_peer),
         );
 
         Self {
