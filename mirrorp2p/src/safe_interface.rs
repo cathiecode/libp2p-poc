@@ -14,6 +14,7 @@ pub fn create_context(
     mode: NetworkMode,
     identity: &[u8],
     initial_peer: Option<String>,
+    listen_addr: Option<String>,
 ) -> Result<Box<NetworkContext>> {
     let initial_peer = initial_peer
         .map(|peer| peer.parse().map_err(|_| CommonError::InvalidInput))
@@ -23,7 +24,7 @@ pub fn create_context(
 
     let _runtime = (*RUNTIME).enter();
 
-    Ok(Box::new(NetworkContext::new(mode, identity, initial_peer)))
+    Ok(Box::new(NetworkContext::new(mode, identity, initial_peer, listen_addr)))
 }
 
 pub fn destroy_context(_context: &mut NetworkContext) {

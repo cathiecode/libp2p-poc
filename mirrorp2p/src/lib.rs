@@ -7,12 +7,12 @@ mod tests;
 
 use network::*;
 use result::{convert_ffi_error, ffi_result_err, ffi_result_ok, CommonError, FfiResult};
-use std::ffi::CStr;
+use std::ffi::*;
 use tracing::{instrument, level_filters::LevelFilter};
 use tracing_subscriber::EnvFilter;
 
 #[no_mangle]
-pub extern "C" fn init(/*logger: extern "C" fn (*const std::ffi::c_char) -> ()*/) -> FfiResult {
+pub extern "C" fn init(/*logger: extern "C" fn (*const c_char) -> ()*/) -> FfiResult {
     let env_filter = EnvFilter::builder()
         .with_default_directive(LevelFilter::DEBUG.into())
         .from_env();
@@ -35,7 +35,13 @@ pub extern "C" fn init(/*logger: extern "C" fn (*const std::ffi::c_char) -> ()*/
 /// # Safety
 /// All pointers must be a valid pointer.
 #[no_mangle]
-pub unsafe extern "C" fn create_context(identity: *const std::ffi::c_uchar, identity_len: std::ffi::c_ushort, initial_peer: *const std::ffi::c_char, context_placeholder: *mut *mut NetworkContext) -> FfiResult {
+pub unsafe extern "C" fn create_context(
+    identity: *const c_uchar,
+    identity_len: c_ushort,
+    initial_peer: *const c_char,
+    listen_addr: *const c_char,
+    context_placeholder: *mut *mut NetworkContext,
+) -> FfiResult {
     let initial_peer: Option<String> = if initial_peer.is_null() {
         None
     } else {
@@ -47,13 +53,20 @@ pub unsafe extern "C" fn create_context(identity: *const std::ffi::c_uchar, iden
         )
     };
 
+    let listen_addr: Option<String> = if listen_addr.is_null() {
+        None
+    } else {
+        Some(
+            unsafe { CStr::from_ptr(listen_addr) }
+                .to_str()
+                .unwrap()
+                .to_string(),
+        )
+    };
+
     let identity = std::slice::from_raw_parts(identity, identity_len.into());
 
-    match safe_interface::create_context(
-        NetworkMode::Client,
-        identity,
-        initial_peer,
-    ) {
+    match safe_interface::create_context(NetworkMode::Client, identity, initial_peer, listen_addr) {
         Ok(context) => {
             unsafe {
                 *context_placeholder = Box::into_raw(context);
@@ -82,9 +95,7 @@ pub unsafe extern "C" fn destroy_context(ptr: *mut NetworkContext) {
 
 #[instrument]
 #[no_mangle]
-pub unsafe extern "C" fn listen_mirror(
-    context: *mut NetworkContext,
-) -> i32 {
+pub unsafe extern "C" fn listen_mirror(context: *mut NetworkContext) -> i32 {
     if context.is_null() {
         return ffi_result_err(CommonError::InvalidInput);
     }
@@ -108,7 +119,7 @@ pub unsafe extern "C" fn listen_mirror(
 #[no_mangle]
 pub unsafe extern "C" fn connect_mirror(
     context: *mut NetworkContext,
-    peer: *const std::ffi::c_char,
+    peer: *const c_char,
     mirror_client: *mut *mut MirrorClient,
 ) -> i32 {
     if context.is_null() {

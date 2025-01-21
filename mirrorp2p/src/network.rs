@@ -3,9 +3,7 @@ use std::time::Duration;
 use anyhow::{anyhow, Result};
 use futures::{AsyncReadExt, AsyncWriteExt, StreamExt};
 use libp2p::{
-    identify, kad,
-    swarm::{self, NetworkBehaviour},
-    Multiaddr, PeerId, StreamProtocol,
+    identify, kad, swarm::{self, NetworkBehaviour}, Multiaddr, PeerId, StreamProtocol
 };
 use libp2p_stream::{self as stream, IncomingStreams};
 use tokio::task::JoinHandle;
@@ -49,6 +47,7 @@ async fn network_control_thread(
     mut identity: Vec<u8>,
     mut command_receiver: NetworkCommandReceiver,
     may_initial_peer: Option<Multiaddr>,
+    may_listen_addr: Option<String>,
 ) -> Result<()> {
 
     let identity = libp2p::identity::ed25519::Keypair::try_from_bytes(&mut identity)?.into();
@@ -73,7 +72,14 @@ async fn network_control_thread(
         })
         .build();
 
-    swarm.listen_on("/ip4/0.0.0.0/udp/0/quic-v1".parse()?)?;
+    let listen_addr: Multiaddr = match may_listen_addr {
+        Some(multiaddr) => multiaddr.parse().map_err(|_| CommonError::InvalidInput)?,
+        None => {
+            "/ip4/0.0.0.0/udp/0/quic-v1".parse().unwrap()
+        }
+    };
+
+    swarm.listen_on(listen_addr)?;
 
     if let Some(initial_peer) = may_initial_peer {
         tracing::info!("Dialing to an well-known peer");
@@ -208,12 +214,12 @@ pub struct NetworkContext {
 }
 
 impl NetworkContext {
-    pub fn new(network_mode: NetworkMode, identity: Vec<u8>, initial_peer: Option<Multiaddr>) -> Self {
+    pub fn new(network_mode: NetworkMode, identity: Vec<u8>, initial_peer: Option<Multiaddr>, listen_addr: Option<String>) -> Self {
         let (command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
 
         // TODO: join support
         let network_thread: JoinHandle<std::result::Result<(), anyhow::Error>> = tokio::spawn(
-            network_control_thread(network_mode, identity, command_receiver, initial_peer),
+            network_control_thread(network_mode, identity, command_receiver, initial_peer, listen_addr),
         );
 
         Self {
