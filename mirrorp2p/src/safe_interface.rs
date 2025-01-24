@@ -48,6 +48,8 @@ pub fn listen_mirror(context: &mut NetworkContext) -> Result<()> {
         .block_on(context.listen_mirror())
         .map_err(|e| convert_ffi_error(e, 5802))?;
 
+    // TODO: accept
+
     Ok(())
 }
 

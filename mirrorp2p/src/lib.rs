@@ -109,7 +109,7 @@ pub unsafe extern "C" fn listen_mirror(context: *mut NetworkContext) -> i32 {
             tracing::debug!("Listening for mirror");
             ffi_result_ok(0)
         }
-        Err(e) => ffi_result_err(convert_ffi_error(e, 5802)),
+        Err(e) => ffi_result_err(convert_ffi_error(e, 61)),
     }
 }
 
