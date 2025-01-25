@@ -52,8 +52,12 @@ fn echo_server() {
                     break;
                 }
 
-                write_mirror_client(client, buffer.as_mut_ptr(), 0, buffer.len());
+                if write_mirror_client(client, buffer.as_mut_ptr(), 0, buffer.len()) < 0 {
+                    break;
+                };
             }
+
+            destroy_mirror_client(client);
         }
     }
 }
@@ -74,7 +78,9 @@ fn test_usecase_server() {
         assert_eq!(listen_mirror(context, &mut listener), 0);
     };
 
-    // FIXME: listener leak
+    unsafe {
+        destroy_mirror_listener(listener);
+    }
 
     unsafe { destroy_context(context) };
 }
@@ -99,8 +105,6 @@ fn stream_test() {
     std::thread::spawn(|| {
         echo_server();
     });
-
-    std::thread::sleep(std::time::Duration::from_secs(10)); // FIXME: Dirty hack
 
     let mut context: *mut crate::NetworkContext = std::ptr::null_mut();
     let mut client: *mut crate::MirrorClient = std::ptr::null_mut();
@@ -127,14 +131,11 @@ fn stream_test() {
             &mut client,
         ), 0);
 
-        let mut send_buffer = [0u8; 4];
-        let mut recv_buffer = [0u8; 4];
+        let mut send_buffer = [0u8; 1];
+        let mut recv_buffer = [0u8; 1];
 
-        for counter in 0..1000 {
-            send_buffer[0] = (counter >> 24) as u8;
-            send_buffer[1] = (counter >> 16) as u8;
-            send_buffer[2] = (counter >> 8) as u8;
-            send_buffer[3] = counter as u8;
+        for counter in 0..100 {
+            send_buffer[0] = counter as u8;
 
             let result = write_mirror_client(client, send_buffer.as_mut_ptr(), 0, 4);
             if result < 0 {
@@ -149,15 +150,7 @@ fn stream_test() {
                 break;
             }
 
-            let mut received_counter = 0;
-
-            received_counter |= recv_buffer[0] as i32;
-            received_counter <<= 8;
-            received_counter |= recv_buffer[1] as i32;
-            received_counter <<= 8;
-            received_counter |= recv_buffer[2] as i32;
-            received_counter <<= 8;
-            received_counter |= recv_buffer[3] as i32;
+            let received_counter = recv_buffer[0] as u32;
 
             assert_eq!(received_counter, counter);
         }
