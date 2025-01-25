@@ -1,5 +1,12 @@
 use mirrorp2p::*;
 
+#[derive(Clone)]
+struct PromiseSendable<T>(T);
+
+unsafe impl<T> std::marker::Send for PromiseSendable<T> {}
+unsafe impl<T> std::marker::Sync for PromiseSendable<T> {}
+
+
 fn setup() {
     static INITIALIZED: std::sync::Once = std::sync::Once::new();
 
@@ -14,7 +21,7 @@ fn identity_alice() -> Vec<u8> {
 }
 
 fn identity_bob() -> Vec<u8> {
-    // Peer id: 
+    // Peer id:
     include_bytes!("./resources/bob.key").to_vec()
 }
 
@@ -67,11 +74,20 @@ fn test_usecase_server() {
     setup();
     let mut context: *mut NetworkContext = std::ptr::null_mut();
     let mut listener: *mut MirrorListener = std::ptr::null_mut();
-    
+
     unsafe {
-        assert_eq!(create_context(identity_alice().as_ptr(), identity_alice().len() as u16, std::ptr::null(), std::ptr::null(), &mut context), 0);
+        assert_eq!(
+            create_context(
+                identity_alice().as_ptr(),
+                identity_alice().len() as u16,
+                std::ptr::null(),
+                std::ptr::null(),
+                &mut context
+            ),
+            0
+        );
     };
-    
+
     assert!(!context.is_null());
 
     unsafe {
@@ -88,11 +104,20 @@ fn test_usecase_server() {
 #[test]
 fn test_usecase_client() {
     let mut context: *mut NetworkContext = std::ptr::null_mut();
-    
+
     unsafe {
-        assert_eq!(create_context(identity_alice().as_ptr(), identity_alice().len() as u16, std::ptr::null(), std::ptr::null(), &mut context), 0);
+        assert_eq!(
+            create_context(
+                identity_alice().as_ptr(),
+                identity_alice().len() as u16,
+                std::ptr::null(),
+                std::ptr::null(),
+                &mut context
+            ),
+            0
+        );
     };
-    
+
     assert!(!context.is_null());
 
     unsafe { destroy_context(context) };
@@ -125,11 +150,14 @@ fn stream_test() {
     assert!(!context.is_null());
 
     unsafe {
-        assert_eq!(connect_mirror(
-            context,
-            c"12D3KooWAtTTz3ZUiWJR3jGNNmBvvQMTtD2VYbJqq9ekqL8GeM7M".as_ptr(),
-            &mut client,
-        ), 0);
+        assert_eq!(
+            connect_mirror(
+                context,
+                c"12D3KooWAtTTz3ZUiWJR3jGNNmBvvQMTtD2VYbJqq9ekqL8GeM7M".as_ptr(),
+                &mut client,
+            ),
+            0
+        );
 
         let mut send_buffer = [0u8; 1];
         let mut recv_buffer = [0u8; 1];
@@ -155,5 +183,80 @@ fn stream_test() {
             assert_eq!(received_counter, counter);
         }
     }
+}
+#[test]
+fn stream_test_par() {
+    setup();
 
+    std::thread::spawn(|| {
+        echo_server();
+    });
+
+    let mut context: *mut crate::NetworkContext = std::ptr::null_mut();
+    let mut client: PromiseSendable<*mut crate::MirrorClient> = PromiseSendable(std::ptr::null_mut());
+
+    unsafe {
+        assert_eq!(
+            crate::create_context(
+                identity_bob().as_ptr(),
+                identity_bob().len() as u16,
+                c"/ip4/127.0.0.1/udp/10592/quic-v1/p2p/12D3KooWAtTTz3ZUiWJR3jGNNmBvvQMTtD2VYbJqq9ekqL8GeM7M".as_ptr(),
+                std::ptr::null(),
+                &mut context
+            ),
+            0
+        );
+    };
+
+    assert!(!context.is_null());
+
+    unsafe {
+        assert_eq!(
+            connect_mirror(
+                context,
+                c"12D3KooWAtTTz3ZUiWJR3jGNNmBvvQMTtD2VYbJqq9ekqL8GeM7M".as_ptr(),
+                &mut client.0,
+            ),
+            0
+        );
+
+        let mut send_buffer = [0u8; 1];
+        let mut recv_buffer = [0u8; 1];
+
+        let client_write = client.clone();
+        let client_read = client.clone();
+
+        std::thread::spawn(move || {
+            let client = client_write;
+
+            for counter in 0..100 {
+                send_buffer[0] = counter as u8;
+
+                let result = write_mirror_client(client.0, send_buffer.as_mut_ptr(), 0, 4);
+                if result < 0 {
+                    println!("write_mirror_client failed, {}", result);
+                    break;
+                }
+            }
+        });
+
+        std::thread::spawn(move || {
+            let client = client_read;
+
+            for counter in 0..100 {
+                let result = read_mirror_client(client.0, recv_buffer.as_mut_ptr(), 0, 4);
+    
+                if result < 0 {
+                    println!("read_mirror_client failed, {}", result);
+                    break;
+                }
+    
+                let received_counter = recv_buffer[0] as u32;
+    
+                assert_eq!(received_counter, counter);
+
+                println!("Received: {}", received_counter);
+            }    
+        });
+    }
 }

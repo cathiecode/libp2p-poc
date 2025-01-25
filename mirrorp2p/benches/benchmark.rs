@@ -10,6 +10,7 @@ fn identity_bob() -> Vec<u8> {
     include_bytes!("../tests/resources/bob.key").to_vec()
 }
 
+#[derive(Clone)]
 struct PromiseSendable<T>(T);
 
 unsafe impl<T> std::marker::Send for PromiseSendable<T> {}
@@ -77,7 +78,8 @@ fn bench_counter(c: &mut Criterion) {
     });
 
     let mut context: *mut crate::NetworkContext = std::ptr::null_mut();
-    let mut client: *mut crate::MirrorClient = std::ptr::null_mut();
+    let mut client: PromiseSendable<*mut crate::MirrorClient> =
+        PromiseSendable(std::ptr::null_mut());
 
     unsafe {
         assert_eq!(
@@ -99,7 +101,7 @@ fn bench_counter(c: &mut Criterion) {
             connect_mirror(
                 context,
                 c"12D3KooWAtTTz3ZUiWJR3jGNNmBvvQMTtD2VYbJqq9ekqL8GeM7M".as_ptr(),
-                &mut client,
+                &mut client.0,
             ),
             0
         );
@@ -116,12 +118,12 @@ fn bench_counter(c: &mut Criterion) {
                 send_buffer[2] = (counter >> 8) as u8;
                 send_buffer[3] = counter as u8;
 
-                let result = write_mirror_client(client, send_buffer.as_mut_ptr(), 0, 4);
+                let result = write_mirror_client(client.0, send_buffer.as_mut_ptr(), 0, 4);
                 if result < 0 {
                     panic!("write_mirror_client failed, {}", result);
                 }
 
-                let result = read_mirror_client(client, recv_buffer.as_mut_ptr(), 0, 4);
+                let result = read_mirror_client(client.0, recv_buffer.as_mut_ptr(), 0, 4);
 
                 if result < 0 {
                     panic!("read_mirror_client failed, {}", result);
@@ -154,14 +156,14 @@ fn bench_counter(c: &mut Criterion) {
                     send_buffer[2] = (counter >> 8) as u8;
                     send_buffer[3] = counter as u8;
 
-                    let result = write_mirror_client(client, send_buffer.as_mut_ptr(), 0, 4);
+                    let result = write_mirror_client(client.0, send_buffer.as_mut_ptr(), 0, 4);
                     if result < 0 {
                         panic!("write_mirror_client failed, {}", result);
                     }
                 }
 
                 for counter in 0..100 {
-                    let result = read_mirror_client(client, recv_buffer.as_mut_ptr(), 0, 4);
+                    let result = read_mirror_client(client.0, recv_buffer.as_mut_ptr(), 0, 4);
 
                     if result < 0 {
                         panic!("read_mirror_client failed, {}", result);
@@ -180,6 +182,58 @@ fn bench_counter(c: &mut Criterion) {
                     assert_eq!(received_counter, counter);
                 }
             }
+        });
+    });
+
+    c.bench_function("echo threaded", |b| {
+        b.iter(|| unsafe {
+            let client_threaded_write = client.clone();
+            let client_threaded_read = client.clone();
+
+            let write_thread = std::thread::spawn(move || {
+                let mut send_buffer = [0u8; 4];
+                let client = client_threaded_write;
+                for counter in 0..1000 {
+                    send_buffer[0] = (counter >> 24) as u8;
+                    send_buffer[1] = (counter >> 16) as u8;
+                    send_buffer[2] = (counter >> 8) as u8;
+                    send_buffer[3] = counter as u8;
+
+                    let result = write_mirror_client(client.0, send_buffer.as_mut_ptr(), 0, 4);
+
+                    if result < 0 {
+                        panic!("write_mirror_client failed, {}", result);
+                    }
+                }
+            });
+
+            let read_thread = std::thread::spawn(move || {
+                let mut recv_buffer = [0u8; 4];
+                let client = client_threaded_read;
+
+                for counter in 0..1000 {
+                    let result = read_mirror_client(client.0, recv_buffer.as_mut_ptr(), 0, 4);
+
+                    if result < 0 {
+                        panic!("read_mirror_client failed, {}", result);
+                    }
+
+                    let mut received_counter = 0;
+
+                    received_counter |= recv_buffer[0] as i32;
+                    received_counter <<= 8;
+                    received_counter |= recv_buffer[1] as i32;
+                    received_counter <<= 8;
+                    received_counter |= recv_buffer[2] as i32;
+                    received_counter <<= 8;
+                    received_counter |= recv_buffer[3] as i32;
+
+                    assert_eq!(received_counter, counter);
+                }
+            });
+
+            read_thread.join().unwrap();
+            write_thread.join().unwrap();
         });
     });
 }
