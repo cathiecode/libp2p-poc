@@ -1,9 +1,11 @@
-use std::{any::Any, time::Duration};
+use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use futures::{AsyncReadExt, AsyncWriteExt, StreamExt};
 use libp2p::{
-    identify, kad, swarm::{self, NetworkBehaviour}, Multiaddr, PeerId, StreamProtocol
+    identify, kad,
+    swarm::{self, NetworkBehaviour},
+    Multiaddr, PeerId, StreamProtocol,
 };
 use libp2p_stream::{self as stream, IncomingStreams};
 use tokio::task::JoinHandle;
@@ -49,7 +51,6 @@ async fn network_control_thread(
     may_initial_peer: Option<Multiaddr>,
     may_listen_addr: Option<String>,
 ) -> Result<()> {
-
     let identity = libp2p::identity::ed25519::Keypair::try_from_bytes(&mut identity)?.into();
     let mut swarm = libp2p::SwarmBuilder::with_existing_identity(identity)
         .with_tokio()
@@ -67,16 +68,12 @@ async fn network_control_thread(
                 )),
             })
         })?
-        .with_swarm_config(|c| {
-            c.with_idle_connection_timeout(Duration::from_secs(10))
-        })
+        .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(10)))
         .build();
 
     let listen_addr: Multiaddr = match may_listen_addr {
         Some(multiaddr) => multiaddr.parse().map_err(|_| CommonError::InvalidInput)?,
-        None => {
-            "/ip4/0.0.0.0/udp/0/quic-v1".parse().unwrap()
-        }
+        None => "/ip4/0.0.0.0/udp/0/quic-v1".parse().unwrap(),
     };
 
     swarm.listen_on(listen_addr)?;
@@ -96,14 +93,14 @@ async fn network_control_thread(
             Some(kad::Mode::Client)
         });
 
-    let mut incoming_streams = Some(
+    /*let mut incoming_streams = Some(
         swarm
             .behaviour()
             .mirror
             .new_control()
             .accept(MIRROR_PROTOCOL)
             .unwrap(),
-    );
+    );*/
 
     // Control thread
     // Poll the swarm to make progress.
@@ -120,14 +117,15 @@ async fn network_control_thread(
                     Some(NetworkCommand::ListenMirror(command)) => {
                         let ListenMirrorNetworkCommand { response } = command;
 
-                        let incoming_streams = incoming_streams.take();
+                        let protocol = StreamProtocol::try_from_owned(format!("/mirror/{}", rand::random::<u32>())).unwrap();
 
-                        if incoming_streams.is_none() {
-                            response.send(Err(anyhow!("Incoming stream already taken"))).map_err(|_| anyhow!("Failed to send incoming streams")).unwrap();
-                            continue;
-                        }
+                        tracing::info!("Listening for incoming streams {:?}", protocol.to_string());
 
-                        response.send(Ok(incoming_streams.unwrap())).map_err(|_| anyhow!("Failed to send incoming streams")).unwrap();
+                        let incoming_streams = swarm.behaviour_mut().mirror.new_control().accept(protocol).unwrap();
+
+                        // TODO: return protocol id
+
+                        response.send(Ok(incoming_streams)).map_err(|_| anyhow!("Failed to send incoming streams")).unwrap();
                     }
                     None => {
                         tracing::warn!("Command channel closed");
@@ -222,13 +220,23 @@ pub struct NetworkContext {
 }
 
 impl NetworkContext {
-    pub fn new(network_mode: NetworkMode, identity: Vec<u8>, initial_peer: Option<Multiaddr>, listen_addr: Option<String>) -> Self {
+    pub fn new(
+        network_mode: NetworkMode,
+        identity: Vec<u8>,
+        initial_peer: Option<Multiaddr>,
+        listen_addr: Option<String>,
+    ) -> Self {
         let (command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
 
         // TODO: join support
-        let network_thread: JoinHandle<std::result::Result<(), anyhow::Error>> = tokio::spawn(
-            network_control_thread(network_mode, identity, command_receiver, initial_peer, listen_addr),
-        );
+        let network_thread: JoinHandle<std::result::Result<(), anyhow::Error>> =
+            tokio::spawn(network_control_thread(
+                network_mode,
+                identity,
+                command_receiver,
+                initial_peer,
+                listen_addr,
+            ));
 
         Self {
             command_sender,

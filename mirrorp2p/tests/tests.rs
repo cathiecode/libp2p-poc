@@ -124,6 +124,44 @@ fn test_usecase_client() {
 }
 
 #[test]
+fn test_usecase_double_listen() {
+    setup();
+    let mut context: *mut NetworkContext = std::ptr::null_mut();
+    let mut listener_1: *mut MirrorListener = std::ptr::null_mut();
+    let mut listener_2: *mut MirrorListener = std::ptr::null_mut();
+
+    unsafe {
+        assert_eq!(
+            create_context(
+                identity_alice().as_ptr(),
+                identity_alice().len() as u16,
+                std::ptr::null(),
+                std::ptr::null(),
+                &mut context
+            ),
+            0
+        );
+    };
+
+    assert!(!context.is_null());
+
+    unsafe {
+        assert_eq!(listen_mirror(context, &mut listener_1), 0);
+    };
+
+    unsafe {
+        assert_eq!(listen_mirror(context, &mut listener_2), 0);
+    }
+
+    unsafe {
+        destroy_mirror_listener(listener_1);
+        destroy_mirror_listener(listener_2);
+    }
+
+    unsafe { destroy_context(context) };
+}
+
+#[test]
 fn stream_test() {
     setup();
 
