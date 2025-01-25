@@ -15,6 +15,10 @@ crate-type = ["lib", "cdylib"]
 name = "generate-key"
 path = "bin/generate-key.rs"
 
+[[bench]]
+name = "benchmark"
+harness = false
+
 [dependencies]
 anyhow = "1"
 futures = "0.3.31"

@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{any::Any, time::Duration};
 
 use anyhow::{anyhow, Result};
 use futures::{AsyncReadExt, AsyncWriteExt, StreamExt};
@@ -191,6 +191,14 @@ impl MirrorClient {
     }
 }
 
+pub fn test(client: MirrorClient) {
+    std::thread::spawn(move || {
+        let c = client;
+
+        c.into_inner();
+    });
+}
+
 pub struct MirrorListener {
     incoming_streams: IncomingStreams,
 }
@@ -252,7 +260,7 @@ impl NetworkContext {
                 response: response_sender,
             }))?;
 
-        let incoming_streams = response_receiver.await.unwrap()?;
+        let incoming_streams = response_receiver.await??;
 
         Ok(MirrorListener { incoming_streams })
     }

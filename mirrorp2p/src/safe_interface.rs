@@ -43,14 +43,18 @@ pub fn connect_mirror(context: &mut NetworkContext, peer: &str) -> Result<Box<Mi
     Ok(Box::new(client))
 }
 
-pub fn listen_mirror(context: &mut NetworkContext) -> Result<()> {
-    (*RUNTIME)
+pub fn listen_mirror(context: &mut NetworkContext) -> Result<Box<MirrorListener>> {
+    let listener = (*RUNTIME)
         .block_on(context.listen_mirror())
-        .map_err(|e| convert_ffi_error(e, 5802))?;
+        .map_err(|e| convert_ffi_error(e, 967))?;
 
-    // TODO: accept
+    Ok(Box::new(listener))
+}
 
-    Ok(())
+pub fn accept_mirror(listener: &mut MirrorListener) -> Result<Box<MirrorClient>> {
+    let client = (*RUNTIME).block_on(listener.accept())?;
+
+    Ok(Box::new(client))
 }
 
 pub fn read_mirror_client(

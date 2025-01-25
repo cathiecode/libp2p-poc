@@ -35,7 +35,7 @@ pub fn convert_ffi_error(error: Error, position: u32) -> CommonError {
     match error.downcast_ref::<CommonError>() {
         Some(error) => *error,
         None => {
-            tracing::error!("Unknown error: {:?}", error);
+            tracing::error!("Unknown error: {:?}, {:?}", error, error.backtrace());
             CommonError::Unknown(position)
         }
     }

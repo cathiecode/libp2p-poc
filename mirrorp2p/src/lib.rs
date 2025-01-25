@@ -2,14 +2,13 @@ pub mod network;
 pub mod result;
 pub mod safe_interface;
 
-#[cfg(test)]
-mod tests;
-
 use network::*;
 use result::{convert_ffi_error, ffi_result_err, ffi_result_ok, CommonError, FfiResult};
 use std::ffi::*;
 use tracing::{instrument, level_filters::LevelFilter};
 use tracing_subscriber::EnvFilter;
+
+pub use network::{MirrorClient, MirrorListener, NetworkContext};
 
 #[no_mangle]
 pub extern "C" fn init(/*logger: extern "C" fn (*const c_char) -> ()*/) -> FfiResult {
@@ -38,15 +37,15 @@ pub extern "C" fn init(/*logger: extern "C" fn (*const c_char) -> ()*/) -> FfiRe
 pub unsafe extern "C" fn create_context(
     identity: *const c_uchar,
     identity_len: c_ushort,
-    initial_peer: *const c_char,
+    initial_peer_multiaddr: *const c_char,
     listen_addr: *const c_char,
     context_placeholder: *mut *mut NetworkContext,
 ) -> FfiResult {
-    let initial_peer: Option<String> = if initial_peer.is_null() {
+    let initial_peer: Option<String> = if initial_peer_multiaddr.is_null() {
         None
     } else {
         Some(
-            unsafe { CStr::from_ptr(initial_peer) }
+            unsafe { CStr::from_ptr(initial_peer_multiaddr) }
                 .to_str()
                 .unwrap()
                 .to_string(),
@@ -95,22 +94,64 @@ pub unsafe extern "C" fn destroy_context(ptr: *mut NetworkContext) {
 
 #[instrument]
 #[no_mangle]
-pub unsafe extern "C" fn listen_mirror(context: *mut NetworkContext) -> i32 {
+pub unsafe extern "C" fn listen_mirror(context: *mut NetworkContext, listener_placeholder: *mut *mut MirrorListener) -> i32 {
     if context.is_null() {
         return ffi_result_err(CommonError::InvalidInput);
     }
 
-    tracing::debug!("Listening for mirror");
-
     let context = unsafe { &mut *context };
 
     match safe_interface::listen_mirror(context) {
-        Ok(_) => {
+        Ok(listener) => {
             tracing::debug!("Listening for mirror");
+
+            unsafe {
+                *listener_placeholder = Box::into_raw(listener)
+            }
+
             ffi_result_ok(0)
         }
         Err(e) => ffi_result_err(convert_ffi_error(e, 61)),
     }
+}
+
+#[instrument]
+#[no_mangle]
+pub unsafe extern "C" fn destroy_mirror_listener(listener: *mut MirrorListener) {
+    if listener.is_null() {
+        return;
+    }
+
+    let _ = unsafe { Box::from_raw(listener) };
+}
+
+#[instrument]
+#[no_mangle]
+pub unsafe extern "C" fn accept_mirror(listener: *mut MirrorListener, client_placeholder: *mut *mut MirrorClient) -> FfiResult {
+    if listener.is_null() {
+        return ffi_result_err(CommonError::InvalidInput);
+    }
+
+    match safe_interface::accept_mirror(&mut *listener) {
+        Ok(client) => {
+            unsafe {
+                *client_placeholder = Box::into_raw(client);
+            }
+
+            ffi_result_ok(0)
+        }
+        Err(e) => ffi_result_err(convert_ffi_error(e, 72)),
+    }
+}
+
+#[instrument]
+#[no_mangle]
+pub unsafe extern "C" fn destroy_mirror_client(client: *mut MirrorClient) {
+    if client.is_null() {
+        return;
+    }
+
+    let _ = unsafe { Box::from_raw(client) };
 }
 
 /// # Safety
