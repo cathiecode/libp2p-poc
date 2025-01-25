@@ -12,16 +12,6 @@ fn identity_bob() -> Vec<u8> {
 
 struct PromiseSendable<T>(T);
 
-/*impl PromiseSendable {
-    unsafe fn read(&mut self, buffer: *mut u8, offset: usize, count: usize) -> i32 {
-        read_mirror_client(self.0, buffer, offset, count)
-    }
-
-    unsafe fn write(&mut self, buffer: *const u8, offset: usize, count: usize) -> i32 {
-        write_mirror_client(self.0, buffer, offset, count)
-    }
-}*/
-
 unsafe impl<T> std::marker::Send for PromiseSendable<T> {}
 unsafe impl<T> std::marker::Sync for PromiseSendable<T> {}
 
@@ -61,12 +51,12 @@ fn counter_server() {
                     if read_mirror_client(client.0, buffer.as_mut_ptr(), 0, buffer.len()) < 0 {
                         break;
                     }
-    
+
                     if write_mirror_client(client.0, buffer.as_mut_ptr(), 0, buffer.len()) < 0 {
                         break;
                     }
                 }
-    
+
                 destroy_mirror_client(client.0);
             }
         });
@@ -105,21 +95,60 @@ fn bench_counter(c: &mut Criterion) {
     assert!(!context.is_null());
 
     unsafe {
-        assert_eq!(connect_mirror(
-            context,
-            c"12D3KooWAtTTz3ZUiWJR3jGNNmBvvQMTtD2VYbJqq9ekqL8GeM7M".as_ptr(),
-            &mut client,
-        ), 0);    
+        assert_eq!(
+            connect_mirror(
+                context,
+                c"12D3KooWAtTTz3ZUiWJR3jGNNmBvvQMTtD2VYbJqq9ekqL8GeM7M".as_ptr(),
+                &mut client,
+            ),
+            0
+        );
     }
 
-    c.bench_function("echo 10000", |b| {
+    c.bench_function("echo(seq) 1000", |b| {
+        b.iter(|| unsafe {
+            let mut send_buffer = [0u8; 4];
+            let mut recv_buffer = [0u8; 4];
 
-        b.iter(|| {
-            unsafe {
-                let mut send_buffer = [0u8; 4];
-                let mut recv_buffer = [0u8; 4];
+            for counter in 0..1000 {
+                send_buffer[0] = (counter >> 24) as u8;
+                send_buffer[1] = (counter >> 16) as u8;
+                send_buffer[2] = (counter >> 8) as u8;
+                send_buffer[3] = counter as u8;
 
-                for counter in 0..10000 {
+                let result = write_mirror_client(client, send_buffer.as_mut_ptr(), 0, 4);
+                if result < 0 {
+                    panic!("write_mirror_client failed, {}", result);
+                }
+
+                let result = read_mirror_client(client, recv_buffer.as_mut_ptr(), 0, 4);
+
+                if result < 0 {
+                    panic!("read_mirror_client failed, {}", result);
+                }
+
+                let mut received_counter = 0;
+
+                received_counter |= recv_buffer[0] as i32;
+                received_counter <<= 8;
+                received_counter |= recv_buffer[1] as i32;
+                received_counter <<= 8;
+                received_counter |= recv_buffer[2] as i32;
+                received_counter <<= 8;
+                received_counter |= recv_buffer[3] as i32;
+
+                assert_eq!(received_counter, counter);
+            }
+        });
+    });
+
+    c.bench_function("echo par", |b| {
+        b.iter(|| unsafe {
+            let mut send_buffer = [0u8; 4];
+            let mut recv_buffer = [0u8; 4];
+
+            for _ in 0..10 {
+                for counter in 0..100 {
                     send_buffer[0] = (counter >> 24) as u8;
                     send_buffer[1] = (counter >> 16) as u8;
                     send_buffer[2] = (counter >> 8) as u8;
@@ -129,7 +158,9 @@ fn bench_counter(c: &mut Criterion) {
                     if result < 0 {
                         panic!("write_mirror_client failed, {}", result);
                     }
+                }
 
+                for counter in 0..100 {
                     let result = read_mirror_client(client, recv_buffer.as_mut_ptr(), 0, 4);
 
                     if result < 0 {
@@ -150,8 +181,6 @@ fn bench_counter(c: &mut Criterion) {
                 }
             }
         });
-
-        sender.send(()).unwrap();
     });
 }
 
