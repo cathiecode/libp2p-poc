@@ -12,7 +12,7 @@ use tokio::task::JoinHandle;
 
 use crate::result::{map_ffi_error, CommonError};
 
-const MIRROR_PROTOCOL: StreamProtocol = StreamProtocol::new("/mirror"); // TODO: version number?
+const MIRROR_PROTOCOL: StreamProtocol = StreamProtocol::new("/mirror/0.1.0"); // TODO: version number?
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum NetworkMode {
