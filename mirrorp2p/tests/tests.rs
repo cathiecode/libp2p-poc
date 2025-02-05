@@ -42,7 +42,7 @@ fn echo_server() {
     };
 
     unsafe {
-        assert_eq!(listen_mirror(context, &mut listener), 0);
+        assert_eq!(listen_mirror(context, 0, &mut listener), 0);
     };
 
     loop {
@@ -91,7 +91,7 @@ fn test_usecase_server() {
     assert!(!context.is_null());
 
     unsafe {
-        assert_eq!(listen_mirror(context, &mut listener), 0);
+        assert_eq!(listen_mirror(context, 0, &mut listener), 0);
     };
 
     unsafe {
@@ -146,11 +146,11 @@ fn test_usecase_double_listen() {
     assert!(!context.is_null());
 
     unsafe {
-        assert_eq!(listen_mirror(context, &mut listener_1), 0);
+        assert_eq!(listen_mirror(context, 0, &mut listener_1), 0);
     };
 
     unsafe {
-        assert_eq!(listen_mirror(context, &mut listener_2), 0);
+        assert_eq!(listen_mirror(context, 0, &mut listener_2), 0);
     }
 
     unsafe {
@@ -168,6 +168,8 @@ fn stream_test() {
     std::thread::spawn(|| {
         echo_server();
     });
+
+    std::thread::sleep(std::time::Duration::from_secs(5));
 
     let mut context: *mut crate::NetworkContext = std::ptr::null_mut();
     let mut client: *mut crate::MirrorClient = std::ptr::null_mut();
@@ -192,6 +194,7 @@ fn stream_test() {
             connect_mirror(
                 context,
                 c"12D3KooWAtTTz3ZUiWJR3jGNNmBvvQMTtD2VYbJqq9ekqL8GeM7M".as_ptr(),
+                0,
                 &mut client,
             ),
             0
@@ -230,6 +233,8 @@ fn stream_test_par() {
         echo_server();
     });
 
+    std::thread::sleep(std::time::Duration::from_secs(5));
+
     let mut context: *mut crate::NetworkContext = std::ptr::null_mut();
     let mut client: PromiseSendable<*mut crate::MirrorClient> = PromiseSendable(std::ptr::null_mut());
 
@@ -253,6 +258,7 @@ fn stream_test_par() {
             connect_mirror(
                 context,
                 c"12D3KooWAtTTz3ZUiWJR3jGNNmBvvQMTtD2VYbJqq9ekqL8GeM7M".as_ptr(),
+                0,
                 &mut client.0,
             ),
             0

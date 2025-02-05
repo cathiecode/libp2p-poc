@@ -94,14 +94,14 @@ pub unsafe extern "C" fn destroy_context(ptr: *mut NetworkContext) {
 
 #[instrument]
 #[no_mangle]
-pub unsafe extern "C" fn listen_mirror(context: *mut NetworkContext, listener_placeholder: *mut *mut MirrorListener) -> i32 {
+pub unsafe extern "C" fn listen_mirror(context: *mut NetworkContext, pseudo_port: c_uint, listener_placeholder: *mut *mut MirrorListener) -> i32 {
     if context.is_null() {
         return ffi_result_err(CommonError::InvalidInput);
     }
 
     let context = unsafe { &mut *context };
 
-    match safe_interface::listen_mirror(context) {
+    match safe_interface::listen_mirror(context, pseudo_port) {
         Ok(listener) => {
             tracing::debug!("Listening for mirror");
 
@@ -161,6 +161,7 @@ pub unsafe extern "C" fn destroy_mirror_client(client: *mut MirrorClient) {
 pub unsafe extern "C" fn connect_mirror(
     context: *mut NetworkContext,
     peer: *const c_char,
+    pseudo_port: c_uint,
     mirror_client: *mut *mut MirrorClient,
 ) -> i32 {
     if context.is_null() {
@@ -172,7 +173,7 @@ pub unsafe extern "C" fn connect_mirror(
     let context = unsafe { &mut *context };
     let peer = unsafe { CStr::from_ptr(peer).to_str().unwrap() };
 
-    let client: Box<MirrorClient> = match safe_interface::connect_mirror(context, peer) {
+    let client: Box<MirrorClient> = match safe_interface::connect_mirror(context, peer, pseudo_port) {
         Ok(client) => client,
         Err(e) => {
             return ffi_result_err(convert_ffi_error(e, 5802));

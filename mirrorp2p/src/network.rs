@@ -12,7 +12,9 @@ use tokio::task::JoinHandle;
 
 use crate::result::{map_ffi_error, CommonError};
 
-const MIRROR_PROTOCOL: StreamProtocol = StreamProtocol::new("/mirror/0.1.0"); // TODO: version number?
+fn mirror_protocol(pseudo_port: u32) -> StreamProtocol {
+    StreamProtocol::try_from_owned(format!("/mirror/{}", pseudo_port)).unwrap()
+}
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum NetworkMode {
@@ -22,10 +24,12 @@ pub enum NetworkMode {
 
 struct ConnectMirrorNetworkCommand {
     peer: PeerId,
+    pseudo_port: u32,
     response: tokio::sync::oneshot::Sender<Result<libp2p::Stream>>,
 }
 
 struct ListenMirrorNetworkCommand {
+    pseudo_port: u32,
     response: tokio::sync::oneshot::Sender<Result<IncomingStreams>>,
 }
 
@@ -111,13 +115,13 @@ async fn network_control_thread(
 
                 match command {
                     Some(NetworkCommand::ConnectMirror(command)) => {
-                        let ConnectMirrorNetworkCommand { peer, response } = command;
-                        tokio::spawn(client_mirror_connection_thread(peer, swarm.behaviour().mirror.new_control(), response));
+                        let ConnectMirrorNetworkCommand { peer, pseudo_port, response } = command;
+                        tokio::spawn(client_mirror_connection_thread(peer, swarm.behaviour().mirror.new_control(), pseudo_port, response));
                     }
                     Some(NetworkCommand::ListenMirror(command)) => {
-                        let ListenMirrorNetworkCommand { response } = command;
+                        let ListenMirrorNetworkCommand { response, pseudo_port } = command;
 
-                        let protocol = StreamProtocol::try_from_owned(format!("/mirror/{}", rand::random::<u32>())).unwrap();
+                        let protocol = mirror_protocol(pseudo_port);
 
                         tracing::info!("Listening for incoming streams {:?}", protocol.to_string());
 
@@ -151,11 +155,13 @@ async fn network_control_thread(
 async fn client_mirror_connection_thread(
     peer: PeerId,
     mut control: stream::Control,
+    pseudo_port: u32,
     result: tokio::sync::oneshot::Sender<Result<libp2p::Stream>>,
 ) {
     tracing::debug!(%peer, "Opening stream to peer");
+
     let stream = control
-        .open_stream(peer, MIRROR_PROTOCOL)
+        .open_stream(peer, mirror_protocol(pseudo_port))
         .await
         .map_err(|e| {
             tracing::debug!(%peer, %e);
@@ -244,11 +250,12 @@ impl NetworkContext {
         }
     }
 
-    pub async fn connect_mirror(&self, peer: PeerId) -> Result<MirrorClient> {
+    pub async fn connect_mirror(&self, peer: PeerId, pseudo_port: u32) -> Result<MirrorClient> {
         let (response_sender, response_receiver) = tokio::sync::oneshot::channel();
         self.command_sender
             .send(NetworkCommand::ConnectMirror(ConnectMirrorNetworkCommand {
                 peer,
+                pseudo_port,
                 response: response_sender,
             }))
             .map_err(|_| CommonError::LogicError(56))?;
@@ -261,10 +268,11 @@ impl NetworkContext {
         Ok(MirrorClient { stream })
     }
 
-    pub async fn listen_mirror(&self) -> Result<MirrorListener> {
+    pub async fn listen_mirror(&self, pseudo_port: u32) -> Result<MirrorListener> {
         let (response_sender, response_receiver) = tokio::sync::oneshot::channel();
         self.command_sender
             .send(NetworkCommand::ListenMirror(ListenMirrorNetworkCommand {
+                pseudo_port: pseudo_port,
                 response: response_sender,
             }))?;
 

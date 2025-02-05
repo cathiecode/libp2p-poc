@@ -33,7 +33,7 @@ fn counter_server() {
     };
 
     unsafe {
-        assert_eq!(listen_mirror(context, &mut listener), 0);
+        assert_eq!(listen_mirror(context, 0, &mut listener), 0);
     };
 
     loop {
@@ -101,6 +101,7 @@ fn bench_counter(c: &mut Criterion) {
             connect_mirror(
                 context,
                 c"12D3KooWAtTTz3ZUiWJR3jGNNmBvvQMTtD2VYbJqq9ekqL8GeM7M".as_ptr(),
+                0,
                 &mut client.0,
             ),
             0

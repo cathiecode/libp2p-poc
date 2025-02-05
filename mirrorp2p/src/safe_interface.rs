@@ -31,11 +31,11 @@ pub fn destroy_context(_context: &mut NetworkContext) {
     // TODO
 }
 
-pub fn connect_mirror(context: &mut NetworkContext, peer: &str) -> Result<Box<MirrorClient>> {
+pub fn connect_mirror(context: &mut NetworkContext, peer: &str, pseudo_port: u32) -> Result<Box<MirrorClient>> {
     let peer = peer.parse().map_err(|_| CommonError::InvalidInput)?;
 
     let client = (*RUNTIME)
-        .block_on(context.connect_mirror(peer))
+        .block_on(context.connect_mirror(peer, pseudo_port))
         .map_err(|e| convert_ffi_error(e, 8231))?;
 
     tracing::debug!("Connected to mirror");
@@ -43,9 +43,9 @@ pub fn connect_mirror(context: &mut NetworkContext, peer: &str) -> Result<Box<Mi
     Ok(Box::new(client))
 }
 
-pub fn listen_mirror(context: &mut NetworkContext) -> Result<Box<MirrorListener>> {
+pub fn listen_mirror(context: &mut NetworkContext, pseudo_port: u32) -> Result<Box<MirrorListener>> {
     let listener = (*RUNTIME)
-        .block_on(context.listen_mirror())
+        .block_on(context.listen_mirror(pseudo_port))
         .map_err(|e| convert_ffi_error(e, 967))?;
 
     Ok(Box::new(listener))
