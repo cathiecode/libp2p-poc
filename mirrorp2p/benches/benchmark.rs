@@ -1,5 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use futures::{AsyncReadExt, AsyncWriteExt};
+use criterion::{criterion_group, criterion_main, Criterion};
 use mirrorp2p::*;
 
 fn identity_alice() -> Vec<u8> {

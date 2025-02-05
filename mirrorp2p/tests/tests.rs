@@ -6,7 +6,6 @@ struct PromiseSendable<T>(T);
 unsafe impl<T> std::marker::Send for PromiseSendable<T> {}
 unsafe impl<T> std::marker::Sync for PromiseSendable<T> {}
 
-
 fn setup() {
     static INITIALIZED: std::sync::Once = std::sync::Once::new();
 
@@ -236,7 +235,8 @@ fn stream_test_par() {
     std::thread::sleep(std::time::Duration::from_secs(5));
 
     let mut context: *mut crate::NetworkContext = std::ptr::null_mut();
-    let mut client: PromiseSendable<*mut crate::MirrorClient> = PromiseSendable(std::ptr::null_mut());
+    let mut client: PromiseSendable<*mut crate::MirrorClient> =
+        PromiseSendable(std::ptr::null_mut());
 
     unsafe {
         assert_eq!(
@@ -289,18 +289,18 @@ fn stream_test_par() {
 
             for counter in 0..100 {
                 let result = read_mirror_client(client.0, recv_buffer.as_mut_ptr(), 0, 4);
-    
+
                 if result < 0 {
                     println!("read_mirror_client failed, {}", result);
                     break;
                 }
-    
+
                 let received_counter = recv_buffer[0] as u32;
-    
+
                 assert_eq!(received_counter, counter);
 
                 println!("Received: {}", received_counter);
-            }    
+            }
         });
     }
 }
