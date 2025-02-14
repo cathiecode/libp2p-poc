@@ -32,8 +32,9 @@ pub fn create_context(
     )))
 }
 
-pub fn destroy_context(_context: &mut NetworkContext) {
-    // TODO
+pub fn destroy_context(context: NetworkContext) -> Result<()> {
+    (*RUNTIME).block_on(context.teardown())?;
+    Ok(())
 }
 
 pub fn connect_mirror(

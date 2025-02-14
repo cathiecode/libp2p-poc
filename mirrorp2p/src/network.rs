@@ -285,4 +285,15 @@ impl NetworkContext {
         tokio::join!(self.network_thread).0??;
         Ok(())
     }
+
+    pub async fn teardown(self) -> Result<()> {
+        std::mem::drop(self.command_sender);
+
+        self.network_thread.await??;
+
+        // FIXME: Wait for the closing of ports
+        std::thread::sleep(std::time::Duration::from_secs(3));
+
+        Ok(())
+    }
 }

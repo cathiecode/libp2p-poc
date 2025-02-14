@@ -7,6 +7,8 @@ pub enum CommonError {
     InvalidInput,
     #[error("FailedToConnect")]
     FailedToConnect,
+    #[error("OperationCanceled")]
+    OperationCanceled,
     #[error("Unknown error")]
     Unknown(u32),
     #[error("Logic error")]
@@ -25,6 +27,7 @@ pub fn ffi_result_err(error: CommonError) -> i32 {
     match error {
         CommonError::InvalidInput => -1,
         CommonError::FailedToConnect => -2,
+        CommonError::OperationCanceled => -3,
         CommonError::Unknown(position) => -(position as i32 + 10000),
         CommonError::LogicError(position) => -(position as i32 + 20000),
     }
