@@ -3,7 +3,9 @@ pub mod result;
 pub mod safe_interface;
 
 use network::*;
-use result::{convert_ffi_error, ffi_result_err, ffi_result_ok, map_ffi_error, CommonError, FfiResult};
+use result::{
+    convert_ffi_error, ffi_result_err, ffi_result_ok, map_ffi_error, CommonError, FfiResult,
+};
 use std::ffi::*;
 use tracing::{instrument, level_filters::LevelFilter};
 use tracing_subscriber::EnvFilter;
@@ -83,7 +85,7 @@ pub unsafe extern "C" fn create_context(
 /// # Safety
 /// All pointers must be a valid pointer.
 #[no_mangle]
-pub unsafe extern "C" fn destroy_context(ptr: *mut NetworkContext) -> FfiResult{
+pub unsafe extern "C" fn destroy_context(ptr: *mut NetworkContext) -> FfiResult {
     if ptr.is_null() {
         return ffi_result_err(CommonError::InvalidInput);
     }
@@ -93,9 +95,7 @@ pub unsafe extern "C" fn destroy_context(ptr: *mut NetworkContext) -> FfiResult{
 
         match safe_interface::destroy_context(*context).map_err(map_ffi_error(52)) {
             Ok(_) => ffi_result_ok(0),
-            Err(e) => {
-                ffi_result_err(e)
-            }
+            Err(e) => ffi_result_err(e),
         }
     }
 }

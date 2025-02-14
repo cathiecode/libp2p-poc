@@ -1,4 +1,7 @@
-use std::{ffi::{CStr, CString}, sync::mpsc::Receiver};
+use std::{
+    ffi::{CStr, CString},
+    sync::mpsc::Receiver,
+};
 
 use libp2p::PeerId;
 use mirrorp2p::*;
@@ -39,7 +42,8 @@ fn identity_bob() -> Vec<u8> {
 
 const ALICE_LISTEN_ADDR: &CStr = c"/ip4/0.0.0.0/udp/10592/quic-v1";
 const ALICE_PEER_ID: &CStr = c"12D3KooWAtTTz3ZUiWJR3jGNNmBvvQMTtD2VYbJqq9ekqL8GeM7M";
-const ALICE_PEER_MULTIADDR: &CStr = c"/ip4/127.0.0.1/udp/10592/quic-v1/p2p/12D3KooWAtTTz3ZUiWJR3jGNNmBvvQMTtD2VYbJqq9ekqL8GeM7M";
+const ALICE_PEER_MULTIADDR: &CStr =
+    c"/ip4/127.0.0.1/udp/10592/quic-v1/p2p/12D3KooWAtTTz3ZUiWJR3jGNNmBvvQMTtD2VYbJqq9ekqL8GeM7M";
 
 // const BOB_LISTEN_ADDR: &CStr = c"/ip4/0.0.0.0/udp/10593/quic-v1";
 
@@ -192,7 +196,7 @@ fn stream_test() {
 
     let echo_server_context = echo_server_context();
 
-    std::thread::spawn(move || {echo_server(echo_server_context)});
+    std::thread::spawn(move || echo_server(echo_server_context));
 
     std::thread::sleep(std::time::Duration::from_secs(5));
 
@@ -216,12 +220,7 @@ fn stream_test() {
 
     unsafe {
         assert_eq!(
-            connect_mirror(
-                context,
-                ALICE_PEER_ID.as_ptr(),
-                0,
-                &mut client,
-            ),
+            connect_mirror(context, ALICE_PEER_ID.as_ptr(), 0, &mut client,),
             0
         );
     }
@@ -267,7 +266,7 @@ fn stream_test_par() {
 
     let echo_server_context = echo_server_context();
 
-    std::thread::spawn(move || {echo_server(echo_server_context)});
+    std::thread::spawn(move || echo_server(echo_server_context));
 
     std::thread::sleep(std::time::Duration::from_secs(5));
 
@@ -291,12 +290,7 @@ fn stream_test_par() {
 
     unsafe {
         assert_eq!(
-            connect_mirror(
-                context,
-                ALICE_PEER_ID.as_ptr(),
-                0,
-                &mut client.inner(),
-            ),
+            connect_mirror(context, ALICE_PEER_ID.as_ptr(), 0, &mut client.inner(),),
             0
         );
     }
@@ -375,9 +369,7 @@ fn test_destroy_context() {
 
         tracing::info!("listener.inner(): {:?}", listener.inner());
 
-        unsafe {
-            crate::accept_mirror(listener.inner(), &mut client)
-        }
+        unsafe { crate::accept_mirror(listener.inner(), &mut client) }
     });
 
     std::thread::sleep(std::time::Duration::from_secs(5));
